@@ -15,7 +15,7 @@ If you have directories full of 24/32-bit stereo `.wav` files or stereo samples 
 ## Requirements
 
 - Python 3.10 or later
-- `pydub`, `librosa`, `matplotlib` (install with `pip`)
+- `pydub`, `librosa`, `matplotlib`, `soundfile` (install with `pip`)
 - `ffmpeg` or `libav` installed for `pydub`
 
 Install dependencies:
@@ -107,19 +107,24 @@ python sample-shrinker.py -j 10 my_samples/
 ## Output Example:
 
 ```bash
-16        st->m+A    -inf      16/16  inst/drums/anvil.wav  [CHANGED]
-16        st->m+A    -84.29    16/16  inst/drums/kalimba.wav  [CHANGED]
-16        st         -60.21    16/16  inst/drums/closed_hh.wav
-8         mono                 8/8    inst/waves/triangle.wav
-16        mono                 16/16  inst/waves/monowave.wav
-24->16    mono                 23/24  vocals/otr-snippet.wav  [CHANGED]
-32->16    st         -22.48    31/32  vocals/accapella.wav  [CHANGED]
+Processing file: /Volumes/Untitled/Samples/wii sports/sound effects/Baseball/Sample_0028.wav
+/Volumes/Untitled/Samples/wii sports/sound effects/Baseball/Sample_0028.wav [UNCHANGED]
+Processing file: /Volumes/Untitled/Samples/wii sports/sound effects/Boxing/Sample_0029.wav
+/Volumes/Untitled/Samples/wii sports/sound effects/Baseball/Sample_0029.wav [CHANGED]: sample rate 48000 -> 44100
+Processing file: /Volumes/Untitled/Samples/wii sports/sound effects/Boxing/Sample_0030.wav
+/Volumes/Untitled/Samples/wii sports/sound effects/Baseball/Sample_0030.wav[CHANGED]: auto-mono
 ```
 
-- Bit depth, channel count, and file path are listed.
-- Files that were changed are followed by `[CHANGED]`.
-- Additional notations like `+A` (auto-mono), `+P` (pre-normalize), and `+M` (minimum bit depth) are added for automatic decisions.
-
-## License
-
-MIT License
+In the updated output format:
+- The script logs each file being processed with the `Processing file:` prefix.
+- After processing, each file will either be marked as `[UNCHANGED]` or `[CHANGED]` depending on whether any modifications (bit depth, sample rate, or channels) were made.
+- If changes are made, the specific adjustments (e.g., `sample rate 48000 -> 44100`) will be displayed.
+  
+### Additional Details:
+- The `[CHANGED]` notation follows files that were modified.
+- `[UNCHANGED]` appears for files that meet the target criteria and required no modifications.
+- **Changes made**:
+  - Sample rate conversions (e.g., `sample rate 48000 -> 44100`).
+  - Bit depth reductions (e.g., `bit depth 32 -> 16`).
+  - Channel conversions (e.g., stereo to mono).
+- Verbose output (`-v`) will print additional information such as ongoing file processing.

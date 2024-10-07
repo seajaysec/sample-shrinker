@@ -6,7 +6,8 @@ from pydub import AudioSegment
 import librosa
 import matplotlib.pyplot as plt
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import concurrent.futures 
 
 def usage_intro():
     return """
