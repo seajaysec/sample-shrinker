@@ -1,0 +1,27 @@
+
+# Ignore macOS metadata files
+.DS_Store
+._*
+Thumbs.db
+
+# Ignore Python bytecode
+__pycache__/
+*.py[cod]
+
+# Ignore logs and backup files
+*.log
+_backup/
+
+# Ignore output files like spectrograms
+*.png
+
+# Ignore directories created by the script
+sample-shrinker-python/_backup/
+sample-shrinker-python/*.log
+sample-shrinker-python/*.png
+
+# Virtual environment files
+venv/
+env/
+.venv
+sample-shrinker_venv/
