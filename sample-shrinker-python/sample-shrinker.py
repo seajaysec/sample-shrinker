@@ -930,13 +930,13 @@ def process_duplicate_directories(duplicates, args):
 
 def get_interactive_config():
     """Get configuration through interactive questionary prompts."""
-
     # First, get the action type
     action = questionary.select(
         "What would you like to do?",
         choices=[
             "Shrink samples (convert audio files)",
             "Remove duplicate directories",
+            "Restore from backup",
             "Exit",
         ],
     ).ask()
@@ -971,46 +971,38 @@ def get_interactive_config():
     args = argparse.Namespace()
     args.files = paths
 
-    # Set ALL default values (matching parse_args defaults)
-    args.backup_dir = "_backup"
-    args.dry_run = False
-    args.verbose = False
-    args.ext = "wav,mp3"
-    args.bitdepth = 16
-    args.min_bitdepth = None
-    args.channels = 2
-    args.samplerate = 44100
-    args.min_samplerate = None
-    args.auto_mono = False
-    args.auto_mono_threshold = -95.5
-    args.skip_spectrograms = False
-    args.pre_normalize = False
-    args.list = False
-    args.jobs = 1
-    args.fuzzy_threshold = 90  # Add default fuzzy threshold
+    if action == "Restore from backup":
+        # Get backup directory
+        args.backup_dir = questionary.path(
+            "Select backup directory to restore from:",
+            only_directories=True,
+            default="_backup",
+        ).ask()
 
-    if action == "Remove duplicate directories":
-        # For duplicate removal, get configuration options
-        duplicate_options = questionary.checkbox(
-            "Select duplicate removal options:",
+        # Get file extensions to restore
+        args.restore_ext = questionary.text(
+            "Enter file extensions to restore (comma-separated, e.g., wav,mp3):",
+            default="wav,mp3",
+        ).ask()
+
+        # Get restore options
+        restore_options = questionary.checkbox(
+            "Select restore options:",
             choices=[
-                "Use fuzzy matching for similar files",
-                "Ignore filenames (match by content only)",
                 "Preview changes (dry run)",
                 "Show detailed progress",
                 "Process files in parallel",
+                "Skip existing files",
+                "Overwrite existing files",
             ],
         ).ask()
 
-        args.use_fuzzy = "Use fuzzy matching for similar files" in duplicate_options
-        args.ignore_names = (
-            "Ignore filenames (match by content only)" in duplicate_options
-        )
-        args.dry_run = "Preview changes (dry run)" in duplicate_options
-        args.verbose = "Show detailed progress" in duplicate_options
+        args.dry_run = "Preview changes (dry run)" in restore_options
+        args.verbose = "Show detailed progress" in restore_options
+        args.skip_existing = "Skip existing files" in restore_options
+        args.overwrite = "Overwrite existing files" in restore_options
 
-        # Add parallel processing configuration
-        if "Process files in parallel" in duplicate_options:
+        if "Process files in parallel" in restore_options:
             args.jobs = questionary.select(
                 "How many parallel jobs?",
                 choices=["2", "4", "8", "16", "24", "32", "48", "64"],
@@ -1020,45 +1012,7 @@ def get_interactive_config():
         else:
             args.jobs = 1
 
-        # Get backup options (modified text prompt)
-        backup_dir = questionary.text(
-            "Backup directory path (where duplicates will be moved):",
-            default="_backup",
-        ).ask()
-
-        if backup_dir.strip():  # If not empty
-            args.backup_dir = backup_dir.strip()
-        else:
-            args.backup_dir = "_backup"  # Fallback to default
-
-        backup_choice = questionary.select(
-            "How should duplicates be handled?",
-            choices=[
-                f"Move to {args.backup_dir} (safe)",
-                "Delete immediately (dangerous)",
-                "Preview only (no changes)",
-            ],
-            default=f"Move to {args.backup_dir} (safe)",
-        ).ask()
-
-        args.delete_duplicates = "Delete" in backup_choice
-        args.dry_run = "Preview" in backup_choice
-
-        if args.use_fuzzy:
-            # Get fuzzy matching configuration
-            threshold_choice = questionary.select(
-                "Select fuzzy matching threshold (higher = more strict):",
-                choices=[
-                    "95 - Nearly identical",
-                    "90 - Very similar",
-                    "85 - Similar",
-                    "80 - Somewhat similar",
-                ],
-                default="90 - Very similar",
-            ).ask()
-            args.fuzzy_threshold = int(threshold_choice.split()[0])
-
-        return "duplicates", args
+        return "restore", args
 
     # For sample shrinking, get all the conversion options
     args.bitdepth = questionary.select(
@@ -1591,6 +1545,126 @@ def process_file_group(group, fuzzy_groups, args, progress):
         raise
 
 
+def restore_from_backup(args):
+    """Restore files from backup to their original locations."""
+    console.print("\n[cyan]Starting Backup Restore Process[/cyan]")
+
+    backup_path = Path(args.backup_dir)
+    if not backup_path.exists():
+        console.print(f"[red]Error: Backup directory {backup_path} not found[/red]")
+        return
+
+    # Get list of extensions to restore
+    extensions = [ext.strip().lower() for ext in args.restore_ext.split(",")]
+
+    # Step 1: Scan backup directory
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("{task.completed}/{task.total} files"),
+        console=console,
+    ) as progress:
+        scan_task = progress.add_task(
+            "[magenta]Scanning backup directory...[/magenta]", total=None
+        )
+
+        # Collect all files to restore
+        restore_files = []
+        for ext in extensions:
+            for file_path in backup_path.rglob(f"*.{ext}"):
+                try:
+                    # Calculate original path
+                    rel_path = file_path.relative_to(backup_path)
+                    target_path = Path(args.files[0]) / rel_path
+                    restore_files.append((file_path, target_path))
+                except Exception as e:
+                    console.print(f"[yellow]Error processing {file_path}: {e}[/yellow]")
+
+        progress.update(
+            scan_task, total=len(restore_files), completed=len(restore_files)
+        )
+
+    # Report findings
+    console.print(
+        Panel(
+            f"Found [cyan]{len(restore_files)}[/cyan] files to restore",
+            title="Backup Scan Complete",
+        )
+    )
+
+    if not restore_files:
+        return
+
+    # Step 2: Restore files
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("{task.completed}/{task.total} files"),
+        console=console,
+    ) as progress:
+        restore_task = progress.add_task(
+            "[green]Restoring files...[/green]", total=len(restore_files)
+        )
+
+        with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+            futures = []
+            for backup_file, target_path in restore_files:
+                future = executor.submit(
+                    restore_single_file,
+                    backup_file,
+                    target_path,
+                    args,
+                )
+                futures.append(future)
+
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                    progress.advance(restore_task)
+                except Exception as e:
+                    console.print(f"[red]Error during restore: {e}[/red]")
+
+    console.print("[green]Restore process complete![/green]")
+
+
+def restore_single_file(backup_file, target_path, args):
+    """Restore a single file from backup to its original location."""
+    try:
+        if args.verbose:
+            console.print(f"Processing: {backup_file} -> {target_path}")
+
+        if target_path.exists():
+            if args.skip_existing:
+                if args.verbose:
+                    console.print(
+                        f"[yellow]Skipping existing file: {target_path}[/yellow]"
+                    )
+                return
+            elif not args.overwrite:
+                console.print(
+                    f"[yellow]Target exists (skipping): {target_path}[/yellow]"
+                )
+                return
+
+        if not args.dry_run:
+            # Create target directory if it doesn't exist
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Copy the file with metadata preserved
+            shutil.copy2(backup_file, target_path)
+
+            if args.verbose:
+                console.print(f"[green]Restored: {target_path}[/green]")
+
+    except Exception as e:
+        console.print(f"[red]Error restoring {backup_file}: {e}[/red]")
+        raise
+
+
 def main():
     # Check for ffmpeg first
     if not check_ffmpeg():
@@ -1607,7 +1681,9 @@ def main():
     if not args:
         return
 
-    if action == "duplicates":
+    if action == "restore":
+        restore_from_backup(args)
+    elif action == "duplicates":
         process_duplicates(args)
     else:  # Shrink samples
         # Delete all '._' files before processing anything
