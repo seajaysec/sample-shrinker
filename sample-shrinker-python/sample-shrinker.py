@@ -383,15 +383,10 @@ def process_duplicate_directories(duplicates, args):
                     print(f"Error moving directory {dir_path}: {e}")
 
 
-def main():
-    args = parse_args()
-
-    # Ensure that at least one file or directory is provided
-    if not args.files:
-        print(usage_intro())
-        return
-
-    # Ask user what they want to do
+def get_interactive_config():
+    """Get configuration through interactive questionary prompts."""
+    
+    # First, get the action type
     action = questionary.select(
         "What would you like to do?",
         choices=[
@@ -402,8 +397,113 @@ def main():
     ).ask()
 
     if action == "Exit":
+        return None, None
+
+    # Get the directory/files to process
+    paths = questionary.path(
+        "Select directory or file to process:",
+        only_directories=False,
+        multiple=True
+    ).ask()
+
+    if not paths:
+        return None, None
+
+    # Create a namespace object to match argparse structure
+    args = argparse.Namespace()
+    args.files = paths.split(",") if isinstance(paths, str) else paths
+    
+    # Set defaults
+    args.backup_dir = "_backup"
+    args.dry_run = False
+    args.skip_spectrograms = False
+    args.jobs = 1
+    args.verbose = False
+    args.ext = "wav,mp3"
+
+    if action == "Remove duplicate directories":
+        # For duplicate removal, we only need a few additional options
+        args.dry_run = questionary.confirm(
+            "Would you like to do a dry run first (preview without making changes)?",
+            default=True
+        ).ask()
+        
+        return "duplicates", args
+
+    # For sample shrinking, get all the conversion options
+    args.bitdepth = questionary.select(
+        "Select target bit depth:",
+        choices=["8", "16", "24"],
+        default="16"
+    ).ask()
+    args.bitdepth = int(args.bitdepth)
+
+    args.channels = questionary.select(
+        "Select target channels:",
+        choices=[
+            "1 (mono)",
+            "2 (stereo)"
+        ],
+        default="2 (stereo)"
+    ).ask()
+    args.channels = 1 if "1" in args.channels else 2
+
+    args.samplerate = questionary.select(
+        "Select target sample rate:",
+        choices=["22050", "44100", "48000"],
+        default="44100"
+    ).ask()
+    args.samplerate = int(args.samplerate)
+
+    # Advanced options in a checkbox group
+    advanced_options = questionary.checkbox(
+        "Select additional options:",
+        choices=[
+            "Auto-convert stereo to mono when possible",
+            "Pre-normalize before conversion",
+            "Skip generating spectrograms",
+            "Preview changes (dry run)",
+            "Process files in parallel"
+        ]
+    ).ask()
+
+    args.auto_mono = "Auto-convert stereo to mono when possible" in advanced_options
+    args.pre_normalize = "Pre-normalize before conversion" in advanced_options
+    args.skip_spectrograms = "Skip generating spectrograms" in advanced_options
+    args.dry_run = "Preview changes (dry run)" in advanced_options
+    
+    if "Process files in parallel" in advanced_options:
+        args.jobs = questionary.select(
+            "How many parallel jobs?",
+            choices=["2", "4", "8", "16"],
+            default="4"
+        ).ask()
+        args.jobs = int(args.jobs)
+
+    if args.auto_mono:
+        args.auto_mono_threshold = float(
+            questionary.text(
+                "Auto-mono threshold in dB (default: -95.5):",
+                default="-95.5"
+            ).ask()
+        )
+
+    return "shrink", args
+
+
+def main():
+    # Check if command line arguments were provided
+    if len(sys.argv) > 1:
+        args = parse_args()
+        action = "shrink"  # Default to shrink mode for command line
+    else:
+        # Use interactive mode
+        action, args = get_interactive_config()
+        
+    if not args:
         return
-    elif action == "Remove duplicate directories":
+
+    if action == "duplicates":
         # Find and process duplicate directories
         print("\nSearching for duplicate directories...")
         duplicates = find_duplicate_directories(args.files)
@@ -427,7 +527,7 @@ def main():
         # Collect the files to process
         file_list = collect_files(args)
 
-        if args.dry_run or args.list:
+        if args.dry_run:
             list_files(args, file_list)
             for file in file_list:
                 process_audio(file, args, dry_run=True)
