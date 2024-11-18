@@ -960,36 +960,89 @@ def find_duplicate_directories(paths, progress, task_id, args):
 
 def process_duplicate_directories(duplicates, args):
     """Process duplicate directories, keeping the oldest copy."""
-    for (dir_name, file_count, total_size), paths in duplicates.items():
-        print(
-            f"\nFound duplicate directories named '{dir_name}' with {file_count} files ({total_size} bytes):"
+    for (
+        dir_name,
+        file_count,
+        subdir_count,
+        total_size,
+        sizes,
+        structure,
+    ), paths in duplicates.items():
+        console.print(
+            f"\nFound duplicate directories named '[cyan]{dir_name}[/cyan]' "
+            f"with {file_count} files, {subdir_count} subdirectories "
+            f"({total_size} bytes):"
         )
 
         # Sort paths by creation time
-        paths_with_time = [(p, p.stat().st_ctime) for p in paths]
-        paths_with_time.sort(key=lambda x: x[1])
+        valid_paths = []
+        for path in paths:
+            try:
+                stat = path.stat()
+                valid_paths.append((path, stat.st_ctime))
+            except FileNotFoundError:
+                console.print(f"[yellow]Warning: Directory not found: {path}[/yellow]")
+                continue
+
+        if not valid_paths:
+            console.print("[red]No valid paths found in group[/red]")
+            return
+
+        valid_paths.sort(key=lambda x: x[1])
 
         # Keep the oldest directory
-        original_dir = paths_with_time[0][0]
-        print(
-            f"Keeping oldest copy: {original_dir} (created: {time.ctime(paths_with_time[0][1])})"
+        original_dir = valid_paths[0][0]
+        console.print(
+            f"Keeping oldest copy: [green]{original_dir}[/green] "
+            f"(created: {time.ctime(valid_paths[0][1])})"
         )
 
         # Process newer copies
-        for dir_path, ctime in paths_with_time[1:]:
-            print(f"Moving duplicate: {dir_path} (created: {time.ctime(ctime)})")
-            if not args.dry_run:
-                # Create backup path
-                rel_path = dir_path.relative_to(dir_path.parent.parent)
-                backup_path = Path(args.backup_dir) / rel_path
+        for dir_path, ctime in valid_paths[1:]:
+            try:
+                if not dir_path.exists():
+                    console.print(
+                        f"[yellow]Warning: Directory disappeared: {dir_path}[/yellow]"
+                    )
+                    continue
 
-                # Ensure backup directory exists
-                backup_path.parent.mkdir(parents=True, exist_ok=True)
+                console.print(
+                    f"Moving duplicate: [yellow]{dir_path}[/yellow] "
+                    f"(created: {time.ctime(ctime)})"
+                )
 
-                try:
-                    shutil.move(str(dir_path), str(backup_path))
-                except Exception as e:
-                    print(f"Error moving directory {dir_path}: {e}")
+                if not args.dry_run:
+                    try:
+                        # Create backup path
+                        rel_path = dir_path.relative_to(dir_path.parent.parent)
+                        backup_path = Path(args.backup_dir) / rel_path
+
+                        # Ensure backup directory exists
+                        backup_path.parent.mkdir(parents=True, exist_ok=True)
+
+                        if backup_path.exists():
+                            console.print(
+                                f"[yellow]Warning: Backup path already exists: {backup_path}[/yellow]"
+                            )
+                            # Create a unique name by appending a number
+                            counter = 1
+                            while backup_path.exists():
+                                new_name = f"{backup_path.name}_{counter}"
+                                backup_path = backup_path.parent / new_name
+                                counter += 1
+                            console.print(
+                                f"[blue]Using alternate path: {backup_path}[/blue]"
+                            )
+
+                        shutil.move(str(dir_path), str(backup_path))
+                    except Exception as e:
+                        console.print(
+                            f"[red]Error moving directory {dir_path}: {e}[/red]"
+                        )
+
+            except Exception as e:
+                console.print(f"[red]Error processing directory {dir_path}: {e}[/red]")
+                continue
 
 
 def get_interactive_config():
