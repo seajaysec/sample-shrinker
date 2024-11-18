@@ -873,8 +873,8 @@ def find_duplicate_directories(paths, progress, task_id):
     dir_map = defaultdict(list)
     scanned = 0
 
-    for path in paths:
-        path = Path(path)
+    for path_str in paths:
+        path = Path(path_str)  # Convert string to Path
         if path.is_dir():
             for dir_path in path.rglob("*"):
                 if dir_path.is_dir():
@@ -1164,7 +1164,10 @@ def process_duplicates(args):
     ) as progress:
         # First count total directories for progress
         total_dirs = sum(
-            1 for path in args.files for _ in path.rglob("*") if path.is_dir()
+            1
+            for path_str in args.files
+            for _ in Path(path_str).rglob("*")
+            if Path(path_str).is_dir()
         )
         scan_task = progress.add_task(
             "[magenta]Scanning for duplicate directory structures...[/magenta]",
