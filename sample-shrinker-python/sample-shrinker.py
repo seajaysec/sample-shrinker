@@ -995,7 +995,7 @@ def get_interactive_config():
         if "Process files in parallel" in duplicate_options:
             args.jobs = questionary.select(
                 "How many parallel jobs?",
-                choices=["2", "4", "8", "16", "24", "32"],
+                choices=["2", "4", "8", "16", "24", "32", "48", "64"],
                 default="4",
             ).ask()
             args.jobs = int(args.jobs)
@@ -1129,7 +1129,7 @@ def process_duplicates(args):
     ) as progress:
         # Phase 1: Directory scan
         scan_task = progress.add_task(
-            "[cyan]Scanning for duplicate directories...", total=None
+            "[magenta]Scanning for duplicate directories...[/magenta]", total=None
         )
         dir_duplicates = find_duplicate_directories(args.files)
         progress.update(scan_task, completed=True)
@@ -1176,7 +1176,7 @@ def process_duplicates(args):
 
         # Phase 2: File scan
         file_task = progress.add_task(
-            "[cyan]Scanning for duplicate files...", total=None
+            "[magenta]Scanning for duplicate files...[/magenta]", total=None
         )
         file_duplicates, fuzzy_groups = find_duplicate_files(args.files, args)
         progress.update(file_task, completed=True)
@@ -1233,10 +1233,17 @@ def process_directory_group(dir_name, file_count, total_size, paths, args, progr
         valid_paths = []
         for path in paths:
             try:
+                if not path.exists():
+                    console.print(
+                        f"[yellow]Warning: Directory not found: {path}[/yellow]"
+                    )
+                    continue
                 stat = path.stat()
                 valid_paths.append((path, stat.st_ctime))
-            except FileNotFoundError:
-                console.print(f"[yellow]Warning: Directory not found: {path}[/yellow]")
+            except (FileNotFoundError, OSError) as e:
+                console.print(
+                    f"[yellow]Warning: Cannot access directory {path}: {e}[/yellow]"
+                )
                 continue
 
         if not valid_paths:
@@ -1254,22 +1261,50 @@ def process_directory_group(dir_name, file_count, total_size, paths, args, progr
 
         # Process newer copies
         for dir_path, ctime in valid_paths[1:]:
-            console.print(
-                f"Moving duplicate: [yellow]{dir_path}[/yellow] "
-                f"(created: {time.ctime(ctime)})"
-            )
-            if not args.dry_run:
-                try:
-                    # Create backup path
-                    rel_path = dir_path.relative_to(dir_path.parent.parent)
-                    backup_path = Path(args.backup_dir) / rel_path
+            try:
+                if not dir_path.exists():
+                    console.print(
+                        f"[yellow]Warning: Directory disappeared: {dir_path}[/yellow]"
+                    )
+                    continue
 
-                    # Ensure backup directory exists
-                    backup_path.parent.mkdir(parents=True, exist_ok=True)
+                console.print(
+                    f"Moving duplicate: [yellow]{dir_path}[/yellow] "
+                    f"(created: {time.ctime(ctime)})"
+                )
 
-                    shutil.move(str(dir_path), str(backup_path))
-                except Exception as e:
-                    console.print(f"[red]Error moving directory {dir_path}: {e}[/red]")
+                if not args.dry_run:
+                    try:
+                        # Create backup path
+                        rel_path = dir_path.relative_to(dir_path.parent.parent)
+                        backup_path = Path(args.backup_dir) / rel_path
+
+                        # Ensure backup directory exists
+                        backup_path.parent.mkdir(parents=True, exist_ok=True)
+
+                        if backup_path.exists():
+                            console.print(
+                                f"[yellow]Warning: Backup path already exists: {backup_path}[/yellow]"
+                            )
+                            # Create a unique name by appending a number
+                            counter = 1
+                            while backup_path.exists():
+                                new_name = f"{backup_path.name}_{counter}"
+                                backup_path = backup_path.parent / new_name
+                                counter += 1
+                            console.print(
+                                f"[blue]Using alternate path: {backup_path}[/blue]"
+                            )
+
+                        shutil.move(str(dir_path), str(backup_path))
+                    except Exception as e:
+                        console.print(
+                            f"[red]Error moving directory {dir_path}: {e}[/red]"
+                        )
+
+            except Exception as e:
+                console.print(f"[red]Error processing directory {dir_path}: {e}[/red]")
+                continue
 
     except Exception as e:
         console.print(f"[red]Error processing directory group {dir_name}: {e}[/red]")
