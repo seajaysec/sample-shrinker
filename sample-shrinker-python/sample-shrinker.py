@@ -1013,11 +1013,10 @@ def get_interactive_config():
                 ],
             ).ask()
 
-        # Get backup options (moved before backup_choice)
+        # Get backup options (modified text prompt)
         backup_dir = questionary.text(
-            "Backup directory path:",
+            "Backup directory path (where duplicates will be moved):",
             default="_backup",
-            description="Directory where duplicates will be moved",
         ).ask()
 
         if backup_dir.strip():  # If not empty
