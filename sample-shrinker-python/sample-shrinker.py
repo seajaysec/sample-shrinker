@@ -145,26 +145,40 @@ def reencode_audio(file_path):
     """Re-encode audio file to PCM 16-bit if it has a different encoding."""
     try:
         output_path = str(Path(file_path).with_suffix(".reencoded.wav"))
-        # Use ffmpeg directly for more reliable conversion
+        # Use ffmpeg with explicit decoding and encoding parameters
         cmd = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(file_path),
-            "-acodec",
-            "pcm_s16le",
-            "-ar",
-            "44100",
-            output_path,
+            "ffmpeg", "-y",
+            "-i", str(file_path),
+            "-acodec", "pcm_s16le",  # Force 16-bit PCM encoding
+            "-ar", "44100",          # Maintain sample rate
+            "-ac", "2",              # Maintain stereo if present
+            "-f", "wav",             # Force WAV format
+            output_path
         ]
-
+        
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
             console.print(f"[green]Successfully re-encoded: {output_path}[/green]")
             return output_path
         else:
-            console.print(f"[red]FFmpeg error: {result.stderr}[/red]")
-            return None
+            # If first attempt fails, try with different decoder
+            cmd = [
+                "ffmpeg", "-y",
+                "-c:a", "adpcm_ms",  # Explicitly specify ADPCM decoder
+                "-i", str(file_path),
+                "-acodec", "pcm_s16le",
+                "-ar", "44100",
+                "-ac", "2",
+                "-f", "wav",
+                output_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                console.print(f"[green]Successfully re-encoded with ADPCM decoder: {output_path}[/green]")
+                return output_path
+            else:
+                console.print(f"[red]FFmpeg error: {result.stderr}[/red]")
+                return None
     except Exception as e:
         console.print(f"[red]Error re-encoding {file_path}: {str(e)}[/red]")
         return None
