@@ -13,7 +13,8 @@ from pathlib import Path
 
 import librosa
 import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
+
+matplotlib.use("Agg")  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import numpy as np
 import questionary
@@ -147,15 +148,21 @@ def reencode_audio(file_path):
         output_path = str(Path(file_path).with_suffix(".reencoded.wav"))
         # Use ffmpeg with explicit decoding and encoding parameters
         cmd = [
-            "ffmpeg", "-y",
-            "-i", str(file_path),
-            "-acodec", "pcm_s16le",  # Force 16-bit PCM encoding
-            "-ar", "44100",          # Maintain sample rate
-            "-ac", "2",              # Maintain stereo if present
-            "-f", "wav",             # Force WAV format
-            output_path
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(file_path),
+            "-acodec",
+            "pcm_s16le",  # Force 16-bit PCM encoding
+            "-ar",
+            "44100",  # Maintain sample rate
+            "-ac",
+            "2",  # Maintain stereo if present
+            "-f",
+            "wav",  # Force WAV format
+            output_path,
         ]
-        
+
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
             console.print(f"[green]Successfully re-encoded: {output_path}[/green]")
@@ -163,18 +170,27 @@ def reencode_audio(file_path):
         else:
             # If first attempt fails, try with different decoder
             cmd = [
-                "ffmpeg", "-y",
-                "-c:a", "adpcm_ms",  # Explicitly specify ADPCM decoder
-                "-i", str(file_path),
-                "-acodec", "pcm_s16le",
-                "-ar", "44100",
-                "-ac", "2",
-                "-f", "wav",
-                output_path
+                "ffmpeg",
+                "-y",
+                "-c:a",
+                "adpcm_ms",  # Explicitly specify ADPCM decoder
+                "-i",
+                str(file_path),
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "44100",
+                "-ac",
+                "2",
+                "-f",
+                "wav",
+                output_path,
             ]
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode == 0:
-                console.print(f"[green]Successfully re-encoded with ADPCM decoder: {output_path}[/green]")
+                console.print(
+                    f"[green]Successfully re-encoded with ADPCM decoder: {output_path}[/green]"
+                )
                 return output_path
             else:
                 console.print(f"[red]FFmpeg error: {result.stderr}[/red]")
@@ -198,6 +214,51 @@ def check_ffmpeg():
         return False
 
 
+def get_audio_properties(file_path):
+    """Get audio file properties using pydub."""
+    try:
+        audio = AudioSegment.from_file(file_path)
+        return {
+            "bit_depth": audio.sample_width * 8,
+            "channels": audio.channels,
+            "sample_rate": audio.frame_rate,
+            "duration": len(audio),
+        }
+    except Exception as e:
+        console.print(
+            f"[yellow]Error reading audio properties from {file_path}: {str(e)}[/yellow]"
+        )
+        return None
+
+
+def needs_conversion(file_path, args):
+    """Check if file needs conversion based on its properties."""
+    props = get_audio_properties(file_path)
+    if not props:
+        return True  # If we can't read properties, attempt conversion
+
+    needs_conversion = False
+    reasons = []
+
+    if props["bit_depth"] > args.bitdepth:
+        needs_conversion = True
+        reasons.append(f"bit depth {props['bit_depth']} -> {args.bitdepth}")
+
+    if props["channels"] > args.channels:
+        needs_conversion = True
+        reasons.append(f"channels {props['channels']} -> {args.channels}")
+
+    if props["sample_rate"] > args.samplerate:
+        needs_conversion = True
+        reasons.append(f"sample rate {props['sample_rate']} -> {args.samplerate}")
+
+    if args.min_samplerate and props["sample_rate"] < args.min_samplerate:
+        needs_conversion = True
+        reasons.append(f"sample rate {props['sample_rate']} -> {args.min_samplerate}")
+
+    return needs_conversion, reasons
+
+
 def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
     """Main function to process audio files based on arguments."""
     try:
@@ -206,19 +267,13 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
         else:
             console.print(f"Processing file: [cyan]{file_path}[/cyan]")
 
-        # First check if file needs processing
-        try:
-            audio = AudioSegment.from_file(file_path)
-            # Skip if file already meets our requirements
-            if (audio.sample_width * 8 <= args.bitdepth and 
-                audio.channels <= args.channels and 
-                audio.frame_rate <= args.samplerate and
-                (not args.min_samplerate or audio.frame_rate >= args.min_samplerate)):
-                console.print(f"[blue]Skipping {file_path} (already meets requirements)[/blue]")
-                return
-        except Exception as e:
-            console.print(f"[yellow]Error checking file {file_path}: {str(e)}[/yellow]")
-            # Continue with processing if we can't check the file
+        # Check if file needs processing
+        needs_conv, reasons = needs_conversion(file_path, args)
+        if not needs_conv:
+            console.print(
+                f"[blue]Skipping {file_path} (already meets requirements)[/blue]"
+            )
+            return
 
         modified = False
         change_reason = []
@@ -284,42 +339,48 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
                         # Convert paths to Path objects
                         file_path_obj = Path(file_path).resolve()
                         backup_base = Path(args.backup_dir).resolve()
-                        
+
                         # Get the relative structure from the file path
                         # Use the last few components of the path to maintain structure
                         path_parts = file_path_obj.parts[-3:]  # Adjust number as needed
                         backup_path = backup_base.joinpath(*path_parts)
-                        
+
                         # Ensure the backup directory exists
                         backup_path.parent.mkdir(parents=True, exist_ok=True)
-                        
+
                         # Copy the original file with metadata preserved
                         console.print(f"[cyan]Backing up to: {backup_path}[/cyan]")
                         shutil.copy2(file_path, backup_path)
-                        
+
                         # Generate spectrograms if enabled
                         if not args.skip_spectrograms:
                             try:
                                 generate_spectrogram(
-                                    file_path, 
-                                    file_path, 
+                                    file_path,
+                                    file_path,
                                     backup_path.parent,
-                                    verbose=args.verbose
+                                    verbose=args.verbose,
                                 )
                             except Exception as spec_err:
-                                console.print(f"[yellow]Warning: Could not generate spectrograms: {spec_err}[/yellow]")
+                                console.print(
+                                    f"[yellow]Warning: Could not generate spectrograms: {spec_err}[/yellow]"
+                                )
                                 if args.verbose:
                                     import traceback
+
                                     console.print(traceback.format_exc())
 
                     except Exception as e:
                         console.print(f"[red]Error creating backup: {str(e)}[/red]")
                         if args.verbose:
                             import traceback
+
                             console.print(traceback.format_exc())
                         return
                 else:
-                    console.print("[yellow]No backup created (backups disabled)[/yellow]")
+                    console.print(
+                        "[yellow]No backup created (backups disabled)[/yellow]"
+                    )
 
                 # Export the converted audio file
                 try:
@@ -373,8 +434,7 @@ def generate_spectrogram(original_file, new_file, backup_dir, verbose=False):
         with plt.ioff():  # Turn off interactive mode
             fig = plt.figure(figsize=(10, 4))
             D_old = librosa.amplitude_to_db(
-                np.abs(librosa.stft(y_old, n_fft=n_fft)), 
-                ref=np.max
+                np.abs(librosa.stft(y_old, n_fft=n_fft)), ref=np.max
             )
             librosa.display.specshow(D_old, sr=sr_old, x_axis="time", y_axis="log")
             plt.colorbar(format="%+2.0f dB")
@@ -388,8 +448,7 @@ def generate_spectrogram(original_file, new_file, backup_dir, verbose=False):
             # Generate spectrogram for new file
             fig = plt.figure(figsize=(10, 4))
             D_new = librosa.amplitude_to_db(
-                np.abs(librosa.stft(y_new, n_fft=n_fft)), 
-                ref=np.max
+                np.abs(librosa.stft(y_new, n_fft=n_fft)), ref=np.max
             )
             librosa.display.specshow(D_new, sr=sr_new, x_axis="time", y_axis="log")
             plt.colorbar(format="%+2.0f dB")
@@ -404,6 +463,7 @@ def generate_spectrogram(original_file, new_file, backup_dir, verbose=False):
         console.print(f"[red]Error generating spectrograms: {str(e)}[/red]")
         if verbose:
             import traceback
+
             console.print(traceback.format_exc())
 
 
@@ -840,7 +900,7 @@ def get_interactive_config():
                 "Preview changes (dry run)",
                 "Show detailed progress",
             ],
-            default=["Preview changes (dry run)"],
+            default=("Preview changes (dry run)",),
         ).ask()
 
         args.use_fuzzy = "Use fuzzy matching for similar files" in duplicate_options
@@ -871,7 +931,7 @@ def get_interactive_config():
                     "Compare sample rates",
                     "Compare channel counts",
                 ],
-                default=["Compare file lengths", "Compare sample rates"],
+                default=("Compare file lengths", "Compare sample rates"),
             ).ask()
 
         # Get backup options (moved before backup_choice)
@@ -953,8 +1013,7 @@ def get_interactive_config():
             # Only ask about spectrograms if they weren't explicitly skipped in advanced options
             if not args.skip_spectrograms:
                 args.skip_spectrograms = not questionary.confirm(
-                    "Generate spectrograms for backup comparison?",
-                    default=False
+                    "Generate spectrograms for backup comparison?", default=False
                 ).ask()
         else:
             args.backup_dir = "-"
@@ -1010,7 +1069,7 @@ def process_duplicates(args):
 
         if args.dry_run:
             console.print("[yellow]DRY RUN - No directories will be moved[/yellow]")
-        process_duplicate_directories(verified_duplicates, args)
+        process_duplicate_directories(dir_duplicates, args)
     else:
         console.print("[blue]No duplicate directories found.[/blue]")
 
