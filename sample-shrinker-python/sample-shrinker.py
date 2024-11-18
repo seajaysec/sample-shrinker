@@ -1440,7 +1440,7 @@ def process_directory_group(dir_name, file_count, total_size, paths, args, progr
         # Process newer copies
         for dir_path, ctime in valid_paths[1:]:
             try:
-                # Check again before processing as cloud storage might have changed
+                # First verify source exists
                 if not dir_path.exists():
                     console.print(
                         f"[yellow]Skipping unavailable directory: {dir_path}[/yellow]"
@@ -1458,9 +1458,17 @@ def process_directory_group(dir_name, file_count, total_size, paths, args, progr
                         rel_path = dir_path.relative_to(dir_path.parent.parent)
                         backup_path = Path(args.backup_dir) / rel_path
 
-                        # Ensure backup directory exists
+                        # IMPORTANT: Create ALL parent directories first
                         backup_path.parent.mkdir(parents=True, exist_ok=True)
 
+                        # Verify the backup path is valid before attempting move
+                        if not backup_path.parent.exists():
+                            console.print(
+                                f"[red]Error: Backup directory could not be created: {backup_path.parent}[/red]"
+                            )
+                            continue
+
+                        # Check if destination already exists
                         if backup_path.exists():
                             console.print(
                                 f"[yellow]Warning: Backup path already exists: {backup_path}[/yellow]"
@@ -1475,10 +1483,26 @@ def process_directory_group(dir_name, file_count, total_size, paths, args, progr
                                 f"[blue]Using alternate path: {backup_path}[/blue]"
                             )
 
-                        shutil.move(str(dir_path), str(backup_path))
+                        # Do the move
+                        try:
+                            shutil.move(str(dir_path), str(backup_path))
+                        except Exception as move_error:
+                            console.print(
+                                f"[red]Error moving {dir_path} to {backup_path}: {move_error}[/red]"
+                            )
+                            # Try to provide more context about the error
+                            if not dir_path.exists():
+                                console.print(
+                                    "[red]Source directory no longer exists[/red]"
+                                )
+                            if not backup_path.parent.exists():
+                                console.print(
+                                    "[red]Destination directory does not exist[/red]"
+                                )
+
                     except Exception as e:
                         console.print(
-                            f"[red]Error moving directory {dir_path}: {e}[/red]"
+                            f"[red]Error setting up backup path for {dir_path}: {e}[/red]"
                         )
 
             except Exception as e:
