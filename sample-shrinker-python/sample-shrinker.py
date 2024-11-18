@@ -251,20 +251,37 @@ def get_audio_properties(file_path):
         # First try direct loading
         try:
             audio = AudioSegment.from_file(file_path)
+            # Fix for incorrect bit depth detection
+            actual_bit_depth = audio.sample_width * 8
+            # Some 24-bit files might be reported as 32-bit
+            if actual_bit_depth == 32:
+                # Check if it's actually 24-bit
+                max_value = max(
+                    abs(min(audio.get_array_of_samples())),
+                    abs(max(audio.get_array_of_samples())),
+                )
+                if max_value <= 0x7FFFFF:  # Max value for 24-bit
+                    actual_bit_depth = 24
+
+            return {
+                "bit_depth": actual_bit_depth,
+                "channels": audio.channels,
+                "sample_rate": audio.frame_rate,
+                "duration": len(audio),
+            }
         except Exception as e:
             # If direct loading fails, try re-encoding first
             reencoded = reencode_audio(file_path)
             if reencoded:
                 audio = AudioSegment.from_file(reencoded)
+                return {
+                    "bit_depth": audio.sample_width * 8,
+                    "channels": audio.channels,
+                    "sample_rate": audio.frame_rate,
+                    "duration": len(audio),
+                }
             else:
                 raise e
-
-        return {
-            "bit_depth": audio.sample_width * 8,
-            "channels": audio.channels,
-            "sample_rate": audio.frame_rate,
-            "duration": len(audio),
-        }
     except Exception as e:
         console.print(
             f"[yellow]Error reading audio properties from {file_path}: {str(e)}[/yellow]"
@@ -400,34 +417,39 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
                         backup_base = Path(args.backup_dir).resolve()
 
                         # Get the relative structure from the file path
-                        # Use the last few components of the path to maintain structure
                         path_parts = file_path_obj.parts[-3:]  # Adjust number as needed
                         backup_path = backup_base.joinpath(*path_parts)
 
-                        # Ensure the backup directory exists
-                        backup_path.parent.mkdir(parents=True, exist_ok=True)
+                        # Check if backup already exists
+                        if backup_path.exists():
+                            console.print(
+                                f"[blue]Backup already exists: {backup_path}[/blue]"
+                            )
+                        else:
+                            # Ensure the backup directory exists
+                            backup_path.parent.mkdir(parents=True, exist_ok=True)
 
-                        # Copy the original file with metadata preserved
-                        console.print(f"[cyan]Backing up to: {backup_path}[/cyan]")
-                        shutil.copy2(file_path, backup_path)
+                            # Copy the original file with metadata preserved
+                            console.print(f"[cyan]Backing up to: {backup_path}[/cyan]")
+                            shutil.copy2(file_path, backup_path)
 
-                        # Generate spectrograms if enabled
-                        if not args.skip_spectrograms:
-                            try:
-                                generate_spectrogram(
-                                    file_path,
-                                    file_path,
-                                    backup_path.parent,
-                                    verbose=args.verbose,
-                                )
-                            except Exception as spec_err:
-                                console.print(
-                                    f"[yellow]Warning: Could not generate spectrograms: {spec_err}[/yellow]"
-                                )
-                                if args.verbose:
-                                    import traceback
+                            # Generate spectrograms if enabled
+                            if not args.skip_spectrograms:
+                                try:
+                                    generate_spectrogram(
+                                        file_path,
+                                        file_path,
+                                        backup_path.parent,
+                                        verbose=args.verbose,
+                                    )
+                                except Exception as spec_err:
+                                    console.print(
+                                        f"[yellow]Warning: Could not generate spectrograms: {spec_err}[/yellow]"
+                                    )
+                                    if args.verbose:
+                                        import traceback
 
-                                    console.print(traceback.format_exc())
+                                        console.print(traceback.format_exc())
 
                     except Exception as e:
                         console.print(f"[red]Error creating backup: {str(e)}[/red]")
