@@ -13,9 +13,9 @@ A Python script to conditionally batch-convert audio samples into minimal `.wav`
 
 ### Duplicate Management
 - **Multi-Level Detection**: Finds duplicates at both directory and file levels
-- **Intelligent Matching**: Uses file size, content hashes, and optional fuzzy matching
+- **Intelligent Matching**: Uses file size, content hashes, and audio fingerprinting
+- **Audio Fingerprinting**: Uses spectral analysis to detect similar audio content
 - **Safe Defaults**: Moves duplicates to backup instead of deleting
-- **Fuzzy Audio Matching**: Can detect similar audio files using configurable criteria
 - **Directory Structure**: Maintains original folder structure in backup directory
 
 ## Requirements
@@ -25,34 +25,36 @@ A Python script to conditionally batch-convert audio samples into minimal `.wav`
   ```
   librosa==0.10.2.post1
   matplotlib==3.9.2
-  numpy==2.1.2
+  numpy
   pydub==0.25.1
   questionary==2.0.1
-  ssdeep==3.4
+  soundfile==0.12.1
+  scipy>=1.11.0
   ```
 - `ffmpeg` or `libav` installed for audio processing
 
 Install system dependencies:
 ```bash
 # MacOS with Homebrew
-brew install ffmpeg ssdeep
+brew install ffmpeg
 
 # Ubuntu/Debian
-sudo apt install ffmpeg ssdeep
+sudo apt install ffmpeg
 ```
 
 ## Usage
 
-### Interactive Mode
-Simply run the script without arguments for an interactive interface:
+### Interactive Mode (Recommended)
+Simply run the script without arguments:
 ```bash
 python sample-shrinker.py
 ```
 
-The interactive mode will guide you through:
+The interactive interface will guide you through:
 1. Choosing between sample conversion or duplicate removal
-2. Selecting directories/files to process
+2. Selecting directories/files to process (add multiple paths)
 3. Configuring operation-specific options
+4. Setting advanced parameters
 
 ### Command Line Mode
 For automation or scripting:
@@ -63,7 +65,7 @@ python sample-shrinker.py [options] FILE|DIRECTORY ...
 ## Sample Conversion Options
 
 ### Interactive Configuration
-When choosing "Shrink samples", you can configure:
+When choosing "Shrink samples", configure:
 - Target bit depth (8, 16, or 24 bit)
 - Channel count (mono or stereo)
 - Sample rate (22050, 44100, or 48000 Hz)
@@ -72,6 +74,8 @@ When choosing "Shrink samples", you can configure:
   - Pre-normalization
   - Spectrogram generation
   - Parallel processing
+  - Minimum sample rate
+  - Minimum bit depth
   - Dry run preview
 
 ### Command Line Options
@@ -79,6 +83,7 @@ When choosing "Shrink samples", you can configure:
 - `-B MIN_BIT_DEPTH`: Set minimum bit depth
 - `-c CHANNELS`: Set target channels (1=mono, 2=stereo)
 - `-r SAMPLERATE`: Set target sample rate (default: 44100)
+- `-R MIN_SAMPLERATE`: Set minimum sample rate
 - `-a`: Enable auto-mono conversion
 - `-p`: Enable pre-normalization
 - `-j JOBS`: Set number of parallel jobs
@@ -88,8 +93,8 @@ When choosing "Shrink samples", you can configure:
 ## Duplicate Removal Options
 
 ### Interactive Configuration
-When choosing "Remove duplicates", you can configure:
-- Fuzzy matching options:
+When choosing "Remove duplicates", configure:
+- Audio matching options:
   - Similarity threshold (80-95%)
   - File length comparison
   - Sample rate comparison
@@ -102,7 +107,7 @@ When choosing "Remove duplicates", you can configure:
   - Delete immediately
   - Preview only
 
-### Process
+### Detection Process
 1. **Directory Level**:
    - Finds directories with matching names
    - Compares file counts and total sizes
@@ -110,10 +115,17 @@ When choosing "Remove duplicates", you can configure:
    - Keeps oldest copy, moves others to backup
 
 2. **File Level**:
-   - Groups files by size
-   - Performs quick hash comparison
-   - Optionally uses fuzzy matching for similar audio
+   - Groups files by size (fast initial filter)
+   - Performs quick hash comparison for exact matches
+   - Uses audio fingerprinting for similar content detection
    - Maintains original directory structure in backup
+
+### Audio Fingerprinting
+- Converts audio to mono for comparison
+- Generates spectral fingerprints
+- Compares frequency content
+- Provides similarity scores as percentages
+- Configurable similarity threshold
 
 ### Safety Features
 - Dry run option to preview changes
@@ -122,12 +134,13 @@ When choosing "Remove duplicates", you can configure:
 - Symlink detection
 - Lock checking
 - Detailed progress reporting
+- Original folder structure preserved in backups
 
 ## Examples
 
 ### Basic Sample Conversion
 ```bash
-# Interactive mode (recommended)
+# Interactive mode with guided configuration
 python sample-shrinker.py
 
 # Command line with specific options
@@ -136,7 +149,7 @@ python sample-shrinker.py -c 1 -b 16 -a samples/
 
 ### Duplicate Removal
 ```bash
-# Interactive mode with guided configuration
+# Interactive mode (recommended)
 python sample-shrinker.py
 
 # Preview duplicate detection
@@ -154,8 +167,8 @@ Moving duplicate: samples/backup/drums (created: Thu Mar 21 11:30:00 2024)
 
 Found similar files: 'snare.wav' (250KB)
 Similarity scores:
-  snare_old.wav: 92% similar
-  snare_copy.wav: 95% similar
+  snare_old.wav: 92.5% similar
+  snare_copy.wav: 95.8% similar
 Keeping oldest copy: samples/snare.wav
 Moving similar files to backup...
 ```
