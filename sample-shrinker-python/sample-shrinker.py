@@ -598,7 +598,7 @@ def process_duplicate_directories(duplicates, args):
 
 def get_interactive_config():
     """Get configuration through interactive questionary prompts."""
-
+    
     # First, get the action type
     action = questionary.select(
         "What would you like to do?",
@@ -613,16 +613,31 @@ def get_interactive_config():
         return None, None
 
     # Get the directory/files to process
-    paths = questionary.path(
-        "Select directory or file to process:", only_directories=False, multiple=True
-    ).ask()
+    paths = []
+    while True:
+        path = questionary.path(
+            "Select directory or file to process (press Enter with empty path when done):",
+            only_directories=False,
+        ).ask()
+        
+        if not path:  # Empty input
+            if paths:  # If we have at least one path, break
+                break
+            else:  # If no paths yet, ask again
+                print("Please select at least one directory or file.")
+                continue
+        
+        paths.append(path)
+        
+        if not questionary.confirm("Add another path?", default=False).ask():
+            break
 
     if not paths:
         return None, None
 
     # Create a namespace object to match argparse structure
     args = argparse.Namespace()
-    args.files = paths.split(",") if isinstance(paths, str) else paths
+    args.files = paths
 
     # Set defaults
     args.backup_dir = "_backup"
