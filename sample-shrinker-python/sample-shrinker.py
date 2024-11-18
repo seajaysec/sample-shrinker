@@ -935,7 +935,7 @@ def get_interactive_config():
         "What would you like to do?",
         choices=[
             "Shrink samples (convert audio files)",
-            "Remove duplicate directories",
+            "Remove duplicate files and directories",
             "Restore from backup",
             "Exit",
         ],
@@ -971,7 +971,66 @@ def get_interactive_config():
     args = argparse.Namespace()
     args.files = paths
 
-    if action == "Restore from backup":
+    # Set default values that all modes need
+    args.dry_run = False
+    args.verbose = False
+    args.jobs = 1
+
+    if action == "Remove duplicate files and directories":
+        # For duplicate removal, get configuration options
+        duplicate_options = questionary.checkbox(
+            "Select duplicate removal options:",
+            choices=[
+                "Use fuzzy matching for similar files",
+                "Ignore filenames (match by content only)",
+                "Preview changes (dry run)",
+                "Show detailed progress",
+                "Process files in parallel",
+            ],
+        ).ask()
+
+        args.use_fuzzy = "Use fuzzy matching for similar files" in duplicate_options
+        args.ignore_names = (
+            "Ignore filenames (match by content only)" in duplicate_options
+        )
+        args.dry_run = "Preview changes (dry run)" in duplicate_options
+        args.verbose = "Show detailed progress" in duplicate_options
+
+        if "Process files in parallel" in duplicate_options:
+            args.jobs = questionary.select(
+                "How many parallel jobs?",
+                choices=["2", "4", "8", "16", "24", "32", "48", "64"],
+                default="4",
+            ).ask()
+            args.jobs = int(args.jobs)
+
+        # Get backup options
+        args.backup_dir = questionary.text(
+            "Backup directory path (where duplicates will be moved):",
+            default="_backup",
+        ).ask()
+
+        if args.backup_dir.strip():  # If not empty
+            args.backup_dir = args.backup_dir.strip()
+        else:
+            args.backup_dir = "_backup"  # Fallback to default
+
+        if args.use_fuzzy:
+            threshold_choice = questionary.select(
+                "Select fuzzy matching threshold (higher = more strict):",
+                choices=[
+                    "95 - Nearly identical",
+                    "90 - Very similar",
+                    "85 - Similar",
+                    "80 - Somewhat similar",
+                ],
+                default="90 - Very similar",
+            ).ask()
+            args.fuzzy_threshold = int(threshold_choice.split()[0])
+
+        return "duplicates", args
+
+    elif action == "Restore from backup":
         # Get backup directory
         args.backup_dir = questionary.path(
             "Select backup directory to restore from:",
@@ -1009,99 +1068,100 @@ def get_interactive_config():
                 default="4",
             ).ask()
             args.jobs = int(args.jobs)
-        else:
-            args.jobs = 1
 
         return "restore", args
 
-    # For sample shrinking, get all the conversion options
-    args.bitdepth = questionary.select(
-        "Select target bit depth:", choices=["8", "16", "24"], default="16"
-    ).ask()
-    args.bitdepth = int(args.bitdepth)
-
-    args.channels = questionary.select(
-        "Select target channels:",
-        choices=["1 (mono)", "2 (stereo)"],
-        default="2 (stereo)",
-    ).ask()
-    args.channels = 1 if "1" in args.channels else 2
-
-    args.samplerate = questionary.select(
-        "Select target sample rate:",
-        choices=["22050", "44100", "48000"],
-        default="44100",
-    ).ask()
-    args.samplerate = int(args.samplerate)
-
-    # Advanced options in a checkbox group
-    advanced_options = questionary.checkbox(
-        "Select additional options:",
-        choices=[
-            "Auto-convert stereo to mono when possible",
-            "Pre-normalize before conversion",
-            "Skip generating spectrograms",
-            "Preview changes (dry run)",
-            "Process files in parallel",
-            "Set minimum sample rate",
-            "Set minimum bit depth",
-            "Convert in place (no backups)",
-        ],
-    ).ask()
-
-    args.auto_mono = "Auto-convert stereo to mono when possible" in advanced_options
-    args.pre_normalize = "Pre-normalize before conversion" in advanced_options
-    args.skip_spectrograms = "Skip generating spectrograms" in advanced_options
-    args.dry_run = "Preview changes (dry run)" in advanced_options
-    convert_in_place = "Convert in place (no backups)" in advanced_options
-
-    # Configure backup settings if not converting in place
-    if not convert_in_place:
-        args.backup_dir = questionary.text(
-            "Backup directory path:",
-            default="_backup",
+    elif action == "Shrink samples (convert audio files)":
+        # For sample shrinking, get all the conversion options
+        args.bitdepth = questionary.select(
+            "Select target bit depth:", choices=["8", "16", "24"], default="16"
         ).ask()
-        if args.backup_dir.strip():  # If not empty
-            args.backup_dir = args.backup_dir.strip()
-            # Only ask about spectrograms if they weren't explicitly skipped in advanced options
-            if not args.skip_spectrograms:
-                args.skip_spectrograms = not questionary.confirm(
-                    "Generate spectrograms for backup comparison?", default=False
-                ).ask()
-        else:
-            args.backup_dir = "-"
-            args.skip_spectrograms = True
+        args.bitdepth = int(args.bitdepth)
 
-    if "Process files in parallel" in advanced_options:
-        args.jobs = questionary.select(
-            "How many parallel jobs? (higher values may improve speed but use more memory)",
-            choices=["2", "4", "8", "16", "24", "32", "48", "64"],
-            default="4",
+        args.channels = questionary.select(
+            "Select target channels:",
+            choices=["1 (mono)", "2 (stereo)"],
+            default="2 (stereo)",
         ).ask()
-        args.jobs = int(args.jobs)
+        args.channels = 1 if "1" in args.channels else 2
 
-    if "Set minimum sample rate" in advanced_options:
-        args.min_samplerate = questionary.select(
-            "Select minimum sample rate:",
+        args.samplerate = questionary.select(
+            "Select target sample rate:",
             choices=["22050", "44100", "48000"],
-            default="22050",
+            default="44100",
         ).ask()
-        args.min_samplerate = int(args.min_samplerate)
+        args.samplerate = int(args.samplerate)
 
-    if "Set minimum bit depth" in advanced_options:
-        args.min_bitdepth = questionary.select(
-            "Select minimum bit depth:", choices=["8", "16", "24"], default="16"
+        # Advanced options in a checkbox group
+        advanced_options = questionary.checkbox(
+            "Select additional options:",
+            choices=[
+                "Auto-convert stereo to mono when possible",
+                "Pre-normalize before conversion",
+                "Skip generating spectrograms",
+                "Preview changes (dry run)",
+                "Process files in parallel",
+                "Set minimum sample rate",
+                "Set minimum bit depth",
+                "Convert in place (no backups)",
+            ],
         ).ask()
-        args.min_bitdepth = int(args.min_bitdepth)
 
-    if args.auto_mono:
-        args.auto_mono_threshold = float(
-            questionary.text(
-                "Auto-mono threshold in dB (default: -95.5):", default="-95.5"
+        args.auto_mono = "Auto-convert stereo to mono when possible" in advanced_options
+        args.pre_normalize = "Pre-normalize before conversion" in advanced_options
+        args.skip_spectrograms = "Skip generating spectrograms" in advanced_options
+        args.dry_run = "Preview changes (dry run)" in advanced_options
+        convert_in_place = "Convert in place (no backups)" in advanced_options
+
+        # Configure backup settings if not converting in place
+        if not convert_in_place:
+            args.backup_dir = questionary.text(
+                "Backup directory path:",
+                default="_backup",
             ).ask()
-        )
+            if args.backup_dir.strip():  # If not empty
+                args.backup_dir = args.backup_dir.strip()
+                # Only ask about spectrograms if they weren't explicitly skipped in advanced options
+                if not args.skip_spectrograms:
+                    args.skip_spectrograms = not questionary.confirm(
+                        "Generate spectrograms for backup comparison?", default=False
+                    ).ask()
+            else:
+                args.backup_dir = "-"
+                args.skip_spectrograms = True
 
-    return "shrink", args
+        if "Process files in parallel" in advanced_options:
+            args.jobs = questionary.select(
+                "How many parallel jobs? (higher values may improve speed but use more memory)",
+                choices=["2", "4", "8", "16", "24", "32", "48", "64"],
+                default="4",
+            ).ask()
+            args.jobs = int(args.jobs)
+
+        if "Set minimum sample rate" in advanced_options:
+            args.min_samplerate = questionary.select(
+                "Select minimum sample rate:",
+                choices=["22050", "44100", "48000"],
+                default="22050",
+            ).ask()
+            args.min_samplerate = int(args.min_samplerate)
+
+        if "Set minimum bit depth" in advanced_options:
+            args.min_bitdepth = questionary.select(
+                "Select minimum bit depth:", choices=["8", "16", "24"], default="16"
+            ).ask()
+            args.min_bitdepth = int(args.min_bitdepth)
+
+        if args.auto_mono:
+            args.auto_mono_threshold = float(
+                questionary.text(
+                    "Auto-mono threshold in dB (default: -95.5):", default="-95.5"
+                ).ask()
+            )
+
+        return "shrink", args
+
+    return action.split()[0].lower(), args  # 'shrink', 'duplicates', or 'restore'
 
 
 def process_duplicates(args):
@@ -1685,7 +1745,7 @@ def main():
         restore_from_backup(args)
     elif action == "duplicates":
         process_duplicates(args)
-    else:  # Shrink samples
+    elif action == "shrink":
         # Delete all '._' files before processing anything
         for path in args.files:
             if os.path.isdir(path):
