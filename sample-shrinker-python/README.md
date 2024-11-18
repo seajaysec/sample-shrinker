@@ -1,130 +1,178 @@
-
 # Sample Shrinker
 
-A Python script to conditionally batch-convert audio samples into minimal `.wav` files, based on target criteria. This script is useful for saving storage space and reducing the I/O stress during simultaneous real-time streaming of multiple `.wav` files on devices like the Dirtywave M8 tracker.
-
-If you have directories full of 24/32-bit stereo `.wav` files or stereo samples with effectively mono content, this script can reclaim wasted storage space and reduce I/O stress on your SD card. It can also detect if the content of a stereo sample is actually mono and convert it automatically!
+A Python script to conditionally batch-convert audio samples into minimal `.wav` files and manage duplicate audio files. This script is useful for saving storage space, reducing I/O stress during simultaneous real-time streaming of multiple `.wav` files, and cleaning up duplicate samples across your library.
 
 ## Features
-- **Conditional Conversion**: Only converts samples that don't meet the target criteria (bit depth, channels, etc.).
-- **Auto-Mono**: Automatically convert stereo samples to mono if the content is effectively mono, with a configurable threshold.
-- **Backup and Spectrogram Generation**: Converted files are backed up (unless disabled) and spectrograms of old vs. new files are generated.
-- **Pre-Normalization**: Optionally normalize samples before downsampling the bit depth to preserve dynamic range.
-- **Parallel Processing**: Use the `-j` option to process multiple files in parallel for faster conversions.
+
+### Sample Conversion
+- **Conditional Conversion**: Only converts samples that don't meet the target criteria (bit depth, channels, etc.)
+- **Auto-Mono**: Automatically convert stereo samples to mono if the content is effectively mono
+- **Backup and Spectrogram Generation**: Converted files are backed up with original folder structure preserved
+- **Pre-Normalization**: Optionally normalize samples before downsampling bit depth
+- **Parallel Processing**: Process multiple files simultaneously for faster conversions
+
+### Duplicate Management
+- **Multi-Level Detection**: Finds duplicates at both directory and file levels
+- **Intelligent Matching**: Uses file size, content hashes, and optional fuzzy matching
+- **Safe Defaults**: Moves duplicates to backup instead of deleting
+- **Fuzzy Audio Matching**: Can detect similar audio files using configurable criteria
+- **Directory Structure**: Maintains original folder structure in backup directory
 
 ## Requirements
 
 - Python 3.10 or later
-- `pydub`, `librosa`, `matplotlib`, `soundfile` (install with `pip`)
-- `ffmpeg` or `libav` installed for `pydub`
+- Required Python packages (install with `pip install -r requirements.txt`):
+  ```
+  librosa==0.10.2.post1
+  matplotlib==3.9.2
+  numpy==2.1.2
+  pydub==0.25.1
+  questionary==2.0.1
+  ssdeep==3.4
+  ```
+- `ffmpeg` or `libav` installed for audio processing
 
-Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-You will also need `ffmpeg`:
+Install system dependencies:
 ```bash
 # MacOS with Homebrew
-brew install ffmpeg
+brew install ffmpeg ssdeep
 
 # Ubuntu/Debian
-sudo apt install ffmpeg
+sudo apt install ffmpeg ssdeep
 ```
 
 ## Usage
 
+### Interactive Mode
+Simply run the script without arguments for an interactive interface:
+```bash
+python sample-shrinker.py
+```
+
+The interactive mode will guide you through:
+1. Choosing between sample conversion or duplicate removal
+2. Selecting directories/files to process
+3. Configuring operation-specific options
+
+### Command Line Mode
+For automation or scripting:
 ```bash
 python sample-shrinker.py [options] FILE|DIRECTORY ...
 ```
 
-### Basic Example:
-```bash
-python sample-shrinker.py directory_of_samples/
-```
+## Sample Conversion Options
 
-This will:
-- Convert samples in place with a target bit depth of 16 and stereo channels unchanged.
-- Back up the original files in a parallel `_backup/` directory.
-- Generate `.png` spectrograms comparing old and new files.
+### Interactive Configuration
+When choosing "Shrink samples", you can configure:
+- Target bit depth (8, 16, or 24 bit)
+- Channel count (mono or stereo)
+- Sample rate (22050, 44100, or 48000 Hz)
+- Advanced options:
+  - Auto-mono conversion
+  - Pre-normalization
+  - Spectrogram generation
+  - Parallel processing
+  - Dry run preview
 
-### Options:
-- `-b BIT_DEPTH`: Set the target bit depth (default: 16). Samples will only be downsampled unless `-B` is set.
-- `-B MIN_BIT_DEPTH`: Set a minimum bit depth. This will upsample any samples below the minimum.
-- `-c CHANNELS`: Set the target number of output channels (default: 2). For mono, use `-c 1`.
-- `-r SAMPLERATE`: Set the target sample rate (default: 44100 Hz).
-- `-R MIN_SAMPLERATE`: Set a minimum sample rate. Samples below this will be upsampled.
-- `-a`: Automatically convert stereo samples to mono if they are effectively mono.
-- `-A DB_THRESHOLD`: Set the auto-mono threshold in dB (default: `-95.5`). This implies `-a`.
-- `-p`: Pre-normalize samples before downsampling bit depth.
-- `-S`: Skip generating spectrogram files.
-- `-d BACKUP_DIR`: Set a directory to store backups. Use `-d -` to disable backups and spectrogram generation.
-- `-l`: List files and preview changes without converting.
-- `-n`: Dry run—log actions without converting any files.
-- `-j JOBS`: Process files in parallel with multiple jobs (default: 1).
-- `-v`: Increase verbosity.
+### Command Line Options
+- `-b BIT_DEPTH`: Set target bit depth (default: 16)
+- `-B MIN_BIT_DEPTH`: Set minimum bit depth
+- `-c CHANNELS`: Set target channels (1=mono, 2=stereo)
+- `-r SAMPLERATE`: Set target sample rate (default: 44100)
+- `-a`: Enable auto-mono conversion
+- `-p`: Enable pre-normalization
+- `-j JOBS`: Set number of parallel jobs
+- `-n`: Preview changes without converting
+- `-d BACKUP_DIR`: Set backup directory (default: _backup)
+
+## Duplicate Removal Options
+
+### Interactive Configuration
+When choosing "Remove duplicates", you can configure:
+- Fuzzy matching options:
+  - Similarity threshold (80-95%)
+  - File length comparison
+  - Sample rate comparison
+  - Channel count comparison
+- Filename handling:
+  - Match by name and content
+  - Match by content only
+- Duplicate handling:
+  - Move to backup (safe)
+  - Delete immediately
+  - Preview only
+
+### Process
+1. **Directory Level**:
+   - Finds directories with matching names
+   - Compares file counts and total sizes
+   - Verifies exact content matches
+   - Keeps oldest copy, moves others to backup
+
+2. **File Level**:
+   - Groups files by size
+   - Performs quick hash comparison
+   - Optionally uses fuzzy matching for similar audio
+   - Maintains original directory structure in backup
+
+### Safety Features
+- Dry run option to preview changes
+- Backup by default instead of deletion
+- Verification of file accessibility
+- Symlink detection
+- Lock checking
+- Detailed progress reporting
 
 ## Examples
 
-### Convert a Directory with Default Settings
+### Basic Sample Conversion
 ```bash
-python sample-shrinker.py my_samples/
-```
-- Convert samples to 16-bit with channels left unchanged.
-- Back up the original files under `_backup/`.
-- Generate spectrogram `.png` files for comparison.
+# Interactive mode (recommended)
+python sample-shrinker.py
 
-### Convert to Mono Automatically for Effectively Mono Samples
-```bash
-python sample-shrinker.py -a my_samples/
-```
-- Automatically convert stereo samples to mono if they are effectively mono (i.e., the difference between the channels is below the threshold).
-
-### Preview Changes Without Modifying Files
-```bash
-python sample-shrinker.py -l -a -A -80 my_samples/
-```
-- Lists all files and shows which ones would be changed without actually modifying them. The threshold for auto-mono is set to -80 dB.
-
-### Convert and Skip Backups
-```bash
-python sample-shrinker.py -d - my_samples/
-```
-- Converts files but does not create backups or generate spectrograms.
-
-### Pre-Normalize Before Downsampling
-```bash
-python sample-shrinker.py -p my_samples/
-```
-- Normalize the audio before downsampling the bit depth to preserve as much dynamic range as possible.
-
-### Process Files in Parallel
-```bash
-python sample-shrinker.py -j 10 my_samples/
-```
-- Process up to 10 files at the same time for faster batch conversion.
-
-## Output Example:
-
-```bash
-Processing file: /Volumes/Untitled/Samples/wii sports/sound effects/Baseball/Sample_0028.wav
-/Volumes/Untitled/Samples/wii sports/sound effects/Baseball/Sample_0028.wav [UNCHANGED]
-Processing file: /Volumes/Untitled/Samples/wii sports/sound effects/Boxing/Sample_0029.wav
-/Volumes/Untitled/Samples/wii sports/sound effects/Baseball/Sample_0029.wav [CHANGED]: sample rate 48000 -> 44100
-Processing file: /Volumes/Untitled/Samples/wii sports/sound effects/Boxing/Sample_0030.wav
-/Volumes/Untitled/Samples/wii sports/sound effects/Baseball/Sample_0030.wav[CHANGED]: auto-mono
+# Command line with specific options
+python sample-shrinker.py -c 1 -b 16 -a samples/
 ```
 
-In the updated output format:
-- The script logs each file being processed with the `Processing file:` prefix.
-- After processing, each file will either be marked as `[UNCHANGED]` or `[CHANGED]` depending on whether any modifications (bit depth, sample rate, or channels) were made.
-- If changes are made, the specific adjustments (e.g., `sample rate 48000 -> 44100`) will be displayed.
-  
-### Additional Details:
-- The `[CHANGED]` notation follows files that were modified.
-- `[UNCHANGED]` appears for files that meet the target criteria and required no modifications.
-- **Changes made**:
-  - Sample rate conversions (e.g., `sample rate 48000 -> 44100`).
-  - Bit depth reductions (e.g., `bit depth 32 -> 16`).
-  - Channel conversions (e.g., stereo to mono).
-- Verbose output (`-v`) will print additional information such as ongoing file processing.
+### Duplicate Removal
+```bash
+# Interactive mode with guided configuration
+python sample-shrinker.py
+
+# Preview duplicate detection
+python sample-shrinker.py samples/ -n
+```
+
+### Output Example
+```
+Processing file: samples/drums/kick.wav
+samples/drums/kick.wav [CHANGED]: bit depth 24 -> 16, auto-mono
+
+Found duplicate directories named 'drums' with 10 files (1.2MB):
+Keeping oldest copy: samples/drums (created: Thu Mar 21 10:00:00 2024)
+Moving duplicate: samples/backup/drums (created: Thu Mar 21 11:30:00 2024)
+
+Found similar files: 'snare.wav' (250KB)
+Similarity scores:
+  snare_old.wav: 92% similar
+  snare_copy.wav: 95% similar
+Keeping oldest copy: samples/snare.wav
+Moving similar files to backup...
+```
+
+## Directory Structure
+```
+samples/                  # Original directory
+  drums/
+    kick.wav
+    snare.wav
+_backup/                 # Backup directory
+  samples/               # Original structure preserved
+    drums/
+      kick.wav.old      # Original files
+      kick.wav.old.png  # Spectrograms
+      kick.wav.new.png
+```
+
+## Contributing
+Contributions are welcome! Please feel free to submit a Pull Request.
