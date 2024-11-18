@@ -868,7 +868,7 @@ def process_duplicate_files(duplicates, fuzzy_groups, args):
                     print(f"Error moving file {file_path}: {e}")
 
 
-def find_duplicate_directories(paths, progress, task_id):
+def find_duplicate_directories(paths, progress, task_id, args):
     """Find directories with matching names and file counts."""
     dir_map = defaultdict(list)
     scanned = 0
@@ -1252,8 +1252,10 @@ def process_duplicates(args):
             total=total_dirs,
         )
 
-        # Modify find_duplicate_directories to update progress
-        dir_duplicates = find_duplicate_directories(args.files, progress, scan_task)
+        # Pass args to find_duplicate_directories
+        dir_duplicates = find_duplicate_directories(
+            args.files, progress, scan_task, args
+        )
         progress.update(scan_task, completed=total_dirs)
 
     if dir_duplicates:
