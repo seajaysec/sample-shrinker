@@ -6,6 +6,8 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+import hashlib
+import filecmp
 
 import librosa
 import matplotlib.pyplot as plt
@@ -489,6 +491,73 @@ def get_interactive_config():
         )
 
     return "shrink", args
+
+
+def process_duplicates(args):
+    """Process both directory and file level duplicates with safety checks."""
+    print("\nPhase 1: Searching for duplicate directories...")
+    dir_duplicates = find_duplicate_directories(args.files)
+    
+    if dir_duplicates:
+        print(f"\nFound {sum(len(v) - 1 for v in dir_duplicates.values())} duplicate directories")
+        
+        # Safety check: Verify directory contents match exactly
+        verified_duplicates = {}
+        for key, paths in dir_duplicates.items():
+            dir_name, file_count, total_size = key
+            
+            # Get file listing for each directory
+            dir_contents = defaultdict(list)
+            for path in paths:
+                files = sorted(f.relative_to(path) for f in path.rglob("*") if f.is_file())
+                content_hash = hashlib.sha256(str(files).encode()).hexdigest()
+                dir_contents[content_hash].append(path)
+            
+            # Only keep directories with exactly matching contents
+            for content_hash, matching_paths in dir_contents.items():
+                if len(matching_paths) > 1:
+                    verified_duplicates[key + (content_hash,)] = matching_paths
+        
+        if args.dry_run:
+            print("\nDRY RUN - No directories will be moved")
+        process_duplicate_directories(verified_duplicates, args)
+    else:
+        print("No duplicate directories found.")
+    
+    print("\nPhase 2: Searching for duplicate files...")
+    file_duplicates = find_duplicate_files(args.files)
+    
+    if file_duplicates:
+        total_duplicates = sum(len(group) - 1 for group in file_duplicates)
+        print(f"\nFound {total_duplicates} duplicate files")
+        
+        # Additional safety checks for file processing
+        safe_duplicates = []
+        for group in file_duplicates:
+            # Verify files are not symbolic links
+            real_files = [f for f in group if not f.is_symlink()]
+            
+            # Check if files are in use (on Windows) or locked
+            available_files = []
+            for file in real_files:
+                try:
+                    with open(file, 'rb') as f:
+                        # Try to get a shared lock
+                        pass
+                    available_files.append(file)
+                except (IOError, OSError):
+                    print(f"Warning: File {file} appears to be in use, skipping")
+            
+            if len(available_files) > 1:
+                safe_duplicates.append(available_files)
+        
+        if args.dry_run:
+            print("\nDRY RUN - No files will be moved")
+        process_duplicate_files(safe_duplicates, args)
+    else:
+        print("No duplicate files found.")
+    
+    print("\nDuplicate removal complete!")
 
 
 def main():
