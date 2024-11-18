@@ -4,6 +4,7 @@ import filecmp
 import hashlib
 import os
 import shutil
+import sys
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -333,14 +334,10 @@ def run_in_parallel(file_list, args):
 
 
 def get_file_hash(file_path, fuzzy=False, chunk_size=1024 * 1024):
-    """Calculate file hash using either SHA-256 or fuzzy hashing."""
+    """Calculate file hash using either SHA-256 or audio fingerprinting."""
     if fuzzy:
-        try:
-            # Generate fuzzy hash for the file
-            return ssdeep.hash_from_file(str(file_path))
-        except Exception as e:
-            print(f"Error generating fuzzy hash for {file_path}: {e}")
-            return None
+        # Use our audio fingerprinting instead of ssdeep
+        return get_audio_fingerprint(file_path)
     else:
         # Standard SHA-256 hash with quick check
         sha256_hash = hashlib.sha256()
@@ -507,12 +504,12 @@ def process_duplicate_files(duplicates, fuzzy_groups, args):
 
         if is_fuzzy:
             # For fuzzy matches, show similarity percentages
-            base_hash = get_file_hash(group[0], fuzzy=True)
+            base_fingerprint = get_audio_fingerprint(group[0])
             print("Similarity scores:")
             for file in group[1:]:
-                file_hash = get_file_hash(file, fuzzy=True)
-                similarity = ssdeep.compare(base_hash, file_hash)
-                print(f"  {file.name}: {similarity}% similar")
+                file_fingerprint = get_audio_fingerprint(file)
+                similarity = compare_audio_similarity(base_fingerprint, file_fingerprint)
+                print(f"  {file.name}: {similarity:.1f}% similar")
 
         # Sort files by creation time
         files_with_time = [(f, f.stat().st_ctime) for f in group]
