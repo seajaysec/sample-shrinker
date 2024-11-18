@@ -732,10 +732,10 @@ def compare_audio_similarity(file1_fingerprint, file2_fingerprint):
     return similarity if not np.isnan(similarity) else 0
 
 
-def find_duplicate_files(paths, args):
+def find_duplicate_files(paths, args, progress, task_id):
     """Find duplicate files using a multi-stage approach with audio fingerprinting."""
-    print("Scanning for duplicate files...")
     size_groups = defaultdict(list)
+    scanned = 0
 
     # First pass: group by size
     for path in paths:
@@ -743,8 +743,12 @@ def find_duplicate_files(paths, args):
         if path.is_dir():
             for file_path in path.rglob("*"):
                 if file_path.is_file() and is_audio_file(str(file_path)):
+                    # Update progress
+                    scanned += 1
+                    progress.update(task_id, completed=scanned)
+
                     if args.verbose:
-                        print(f"Scanning: {file_path}")
+                        console.print(f"Scanning: {file_path}")
                     size = file_path.stat().st_size
                     size_groups[size].append(file_path)
 
@@ -864,15 +868,20 @@ def process_duplicate_files(duplicates, fuzzy_groups, args):
                     print(f"Error moving file {file_path}: {e}")
 
 
-def find_duplicate_directories(paths):
+def find_duplicate_directories(paths, progress, task_id):
     """Find directories with matching names and file counts."""
     dir_map = defaultdict(list)
+    scanned = 0
 
     for path in paths:
         path = Path(path)
         if path.is_dir():
             for dir_path in path.rglob("*"):
                 if dir_path.is_dir():
+                    # Update progress
+                    scanned += 1
+                    progress.update(task_id, completed=scanned)
+
                     # Get directory name, file count, and total size
                     dir_name = dir_path.name.lower()  # Case-insensitive comparison
                     files = list(dir_path.glob("*"))
@@ -1150,14 +1159,21 @@ def process_duplicates(args):
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TaskProgressColumn(),
+        TextColumn("{task.completed}/{task.total} directories"),
         console=console,
     ) as progress:
+        # First count total directories for progress
+        total_dirs = sum(
+            1 for path in args.files for _ in path.rglob("*") if path.is_dir()
+        )
         scan_task = progress.add_task(
             "[magenta]Scanning for duplicate directory structures...[/magenta]",
-            total=None,
+            total=total_dirs,
         )
-        dir_duplicates = find_duplicate_directories(args.files)
-        progress.update(scan_task, completed=True)
+
+        # Modify find_duplicate_directories to update progress
+        dir_duplicates = find_duplicate_directories(args.files, progress, scan_task)
+        progress.update(scan_task, completed=total_dirs)
 
     if dir_duplicates:
         count = sum(len(v) - 1 for v in dir_duplicates.values())
@@ -1173,10 +1189,11 @@ def process_duplicates(args):
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),
+                TextColumn("{task.completed}/{task.total} duplicates"),
                 console=console,
             ) as progress:
                 dir_task = progress.add_task(
-                    "[green]Processing directories...", total=len(dir_duplicates)
+                    "[green]Processing directories...", total=count
                 )
                 with ThreadPoolExecutor(max_workers=args.jobs) as executor:
                     futures = []
@@ -1210,14 +1227,23 @@ def process_duplicates(args):
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TaskProgressColumn(),
+        TextColumn("{task.completed}/{task.total} files"),
         console=console,
     ) as progress:
+        # First count total files for progress
+        total_files = sum(
+            1 for path in args.files for _ in path.rglob("*") if path.is_file()
+        )
         file_task = progress.add_task(
             "[magenta]Scanning for duplicate files across all directories...[/magenta]",
-            total=None,
+            total=total_files,
         )
-        file_duplicates, fuzzy_groups = find_duplicate_files(args.files, args)
-        progress.update(file_task, completed=True)
+
+        # Modify find_duplicate_files to update progress
+        file_duplicates, fuzzy_groups = find_duplicate_files(
+            args.files, args, progress, file_task
+        )
+        progress.update(file_task, completed=total_files)
 
         if file_duplicates:
             total_duplicates = sum(len(group) - 1 for group in file_duplicates)
@@ -1229,29 +1255,37 @@ def process_duplicates(args):
                 )
             )
             if not args.dry_run:
-                file_process_task = progress.add_task(
-                    "[green]Processing files...", total=len(file_duplicates)
-                )
-                with ThreadPoolExecutor(max_workers=args.jobs) as executor:
-                    futures = []
-                    for group in file_duplicates:
-                        future = executor.submit(
-                            process_file_group,
-                            group,
-                            fuzzy_groups,
-                            args,
-                            progress,
-                        )
-                        futures.append(future)
-
-                    for future in as_completed(futures):
-                        try:
-                            future.result()
-                            progress.advance(file_process_task)
-                        except Exception as e:
-                            console.print(
-                                f"[red]Error processing file group: {e}[/red]"
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    TextColumn("{task.completed}/{task.total} duplicates"),
+                    console=console,
+                ) as progress:
+                    file_process_task = progress.add_task(
+                        "[green]Processing files...", total=total_duplicates
+                    )
+                    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+                        futures = []
+                        for group in file_duplicates:
+                            future = executor.submit(
+                                process_file_group,
+                                group,
+                                fuzzy_groups,
+                                args,
+                                progress,
                             )
+                            futures.append(future)
+
+                        for future in as_completed(futures):
+                            try:
+                                future.result()
+                                progress.advance(file_process_task)
+                            except Exception as e:
+                                console.print(
+                                    f"[red]Error processing file group: {e}[/red]"
+                                )
 
     console.print("[green]Duplicate analysis and removal complete![/green]")
 
