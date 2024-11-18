@@ -1,20 +1,20 @@
 import argparse
 import concurrent.futures
+import filecmp
+import hashlib
 import os
 import shutil
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-import hashlib
-import filecmp
-import ssdeep  # Add to imports
 
 import librosa
 import matplotlib.pyplot as plt
 import numpy as np
 import questionary
 import soundfile as sf
+import ssdeep  # Add to imports
 from pydub import AudioSegment
 
 
@@ -331,7 +331,7 @@ def run_in_parallel(file_list, args):
         raise
 
 
-def get_file_hash(file_path, fuzzy=False, chunk_size=1024*1024):
+def get_file_hash(file_path, fuzzy=False, chunk_size=1024 * 1024):
     """Calculate file hash using either SHA-256 or fuzzy hashing."""
     if fuzzy:
         try:
@@ -344,29 +344,31 @@ def get_file_hash(file_path, fuzzy=False, chunk_size=1024*1024):
         # Standard SHA-256 hash with quick check
         sha256_hash = hashlib.sha256()
         file_size = os.path.getsize(file_path)
-        
+
         with open(file_path, "rb") as f:
             # Read first chunk
             first_chunk = f.read(chunk_size)
             sha256_hash.update(first_chunk)
-            
+
             # If file is large enough, read last chunk
             if file_size > chunk_size * 2:
                 f.seek(-chunk_size, 2)
                 last_chunk = f.read(chunk_size)
                 sha256_hash.update(last_chunk)
-                
+
             return sha256_hash.hexdigest()
+
 
 def is_audio_file(file_path):
     """Check if file is an audio file we want to process."""
-    return file_path.lower().endswith(('.wav', '.mp3'))
+    return file_path.lower().endswith((".wav", ".mp3"))
+
 
 def find_duplicate_files(paths, args):
     """Find duplicate files using a multi-stage approach with optional fuzzy matching."""
     print("Scanning for duplicate files...")
     size_groups = defaultdict(list)
-    
+
     for path in paths:
         path = Path(path)
         if path.is_dir():
@@ -376,15 +378,15 @@ def find_duplicate_files(paths, args):
                         print(f"Scanning: {file_path}")
                     size = file_path.stat().st_size
                     size_groups[size].append(file_path)
-    
+
     hash_groups = defaultdict(list)
     fuzzy_groups = []
-    
+
     for size, file_paths in size_groups.items():
         if len(file_paths) > 1:
             if args.verbose:
                 print(f"\nChecking {len(file_paths)} files of size {size} bytes...")
-            
+
             # First pass: exact matches
             for file_path in file_paths:
                 try:
@@ -398,63 +400,70 @@ def find_duplicate_files(paths, args):
                         hash_groups[(name_key, file_hash)].append(file_path)
                 except Exception as e:
                     print(f"Error hashing file {file_path}: {e}")
-            
+
             # Second pass: fuzzy matching if enabled
             if args.use_fuzzy:
-                unmatched = [f for f in file_paths if not any(f in g for g in hash_groups.values() if len(g) > 1)]
+                unmatched = [
+                    f
+                    for f in file_paths
+                    if not any(f in g for g in hash_groups.values() if len(g) > 1)
+                ]
                 if len(unmatched) > 1:
                     fuzzy_matches = defaultdict(list)
-                    
+
                     for file_path in unmatched:
                         try:
                             audio = AudioSegment.from_file(str(file_path))
                             fuzzy_key = []
-                            
+
                             if "Compare file lengths" in args.fuzzy_options:
                                 fuzzy_key.append(len(audio))
                             if "Compare sample rates" in args.fuzzy_options:
                                 fuzzy_key.append(audio.frame_rate)
                             if "Compare channel counts" in args.fuzzy_options:
                                 fuzzy_key.append(audio.channels)
-                            
+
                             fuzzy_hash = get_file_hash(file_path, fuzzy=True)
                             if fuzzy_hash:
-                                fuzzy_matches[(tuple(fuzzy_key), fuzzy_hash)].append(file_path)
+                                fuzzy_matches[(tuple(fuzzy_key), fuzzy_hash)].append(
+                                    file_path
+                                )
                         except Exception as e:
                             print(f"Error analyzing {file_path}: {e}")
-                    
+
                     # Compare fuzzy matches
                     for key, matches in fuzzy_matches.items():
                         if len(matches) > 1:
                             base_hash = get_file_hash(matches[0], fuzzy=True)
                             similar_files = [matches[0]]
-                            
+
                             for other_file in matches[1:]:
                                 other_hash = get_file_hash(other_file, fuzzy=True)
                                 similarity = ssdeep.compare(base_hash, other_hash)
                                 if similarity >= args.fuzzy_threshold:
                                     similar_files.append(other_file)
-                            
+
                             if len(similar_files) > 1:
                                 fuzzy_groups.append(similar_files)
-    
+
     # Combine results based on exact and fuzzy matches
     duplicates = [group for group in hash_groups.values() if len(group) > 1]
     if args.use_fuzzy:
         duplicates.extend(fuzzy_groups)
-    
+
     return duplicates, fuzzy_groups
+
 
 def process_duplicate_files(duplicates, fuzzy_groups, args):
     """Process duplicate files with enhanced reporting."""
     for group in duplicates:
         is_fuzzy = group in fuzzy_groups
         match_type = "similar" if is_fuzzy else "identical"
-        
+
         # Get file size for reporting
         file_size = group[0].stat().st_size
         print(f"\nFound {match_type} files: '{group[0].name}' ({file_size} bytes)")
-        
+
         if is_fuzzy:
             # For fuzzy matches, show similarity percentages
             base_hash = get_file_hash(group[0], fuzzy=True)
@@ -463,27 +472,31 @@ def process_duplicate_files(duplicates, fuzzy_groups, args):
                 file_hash = get_file_hash(file, fuzzy=True)
                 similarity = ssdeep.compare(base_hash, file_hash)
                 print(f"  {file.name}: {similarity}% similar")
-        
+
         # Sort files by creation time
         files_with_time = [(f, f.stat().st_ctime) for f in group]
         files_with_time.sort(key=lambda x: x[1])
-        
+
         # Keep the oldest file
         original_file = files_with_time[0][0]
-        print(f"Keeping oldest copy: {original_file} (created: {time.ctime(files_with_time[0][1])})")
-        
+        print(
+            f"Keeping oldest copy: {original_file} (created: {time.ctime(files_with_time[0][1])})"
+        )
+
         # Process newer copies
         for file_path, ctime in files_with_time[1:]:
-            print(f"Moving {match_type} file: {file_path} (created: {time.ctime(ctime)})")
+            print(
+                f"Moving {match_type} file: {file_path} (created: {time.ctime(ctime)})"
+            )
             if not args.dry_run:
                 try:
                     # Create backup path maintaining directory structure
                     rel_path = file_path.relative_to(file_path.parent.parent)
                     backup_path = Path(args.backup_dir) / rel_path
-                    
+
                     # Ensure backup directory exists
                     backup_path.parent.mkdir(parents=True, exist_ok=True)
-                    
+
                     # Move the file
                     shutil.move(str(file_path), str(backup_path))
                 except Exception as e:
@@ -547,7 +560,7 @@ def process_duplicate_directories(duplicates, args):
 
 def get_interactive_config():
     """Get configuration through interactive questionary prompts."""
-    
+
     # First, get the action type
     action = questionary.select(
         "What would you like to do?",
@@ -563,9 +576,7 @@ def get_interactive_config():
 
     # Get the directory/files to process
     paths = questionary.path(
-        "Select directory or file to process:",
-        only_directories=False,
-        multiple=True
+        "Select directory or file to process:", only_directories=False, multiple=True
     ).ask()
 
     if not paths:
@@ -574,7 +585,7 @@ def get_interactive_config():
     # Create a namespace object to match argparse structure
     args = argparse.Namespace()
     args.files = paths.split(",") if isinstance(paths, str) else paths
-    
+
     # Set defaults
     args.backup_dir = "_backup"
     args.dry_run = False
@@ -591,11 +602,13 @@ def get_interactive_config():
                 "Preview changes (dry run)",
                 "Show detailed progress",
             ],
-            default=["Preview changes (dry run)"]
+            default=["Preview changes (dry run)"],
         ).ask()
 
         args.use_fuzzy = "Use fuzzy matching for similar files" in duplicate_options
-        args.ignore_names = "Ignore filenames (match by content only)" in duplicate_options
+        args.ignore_names = (
+            "Ignore filenames (match by content only)" in duplicate_options
+        )
         args.dry_run = "Preview changes (dry run)" in duplicate_options
         args.verbose = "Show detailed progress" in duplicate_options
 
@@ -607,9 +620,9 @@ def get_interactive_config():
                     "95 - Nearly identical",
                     "90 - Very similar",
                     "85 - Similar",
-                    "80 - Somewhat similar"
+                    "80 - Somewhat similar",
                 ],
-                default="90 - Very similar"
+                default="90 - Very similar",
             ).ask()
             args.fuzzy_threshold = int(args.fuzzy_threshold.split()[0])
 
@@ -620,7 +633,7 @@ def get_interactive_config():
                     "Compare sample rates",
                     "Compare channel counts",
                 ],
-                default=["Compare file lengths", "Compare sample rates"]
+                default=["Compare file lengths", "Compare sample rates"],
             ).ask()
 
         # Get backup options
@@ -629,9 +642,9 @@ def get_interactive_config():
             choices=[
                 "Move to backup directory (safe)",
                 "Delete immediately (dangerous)",
-                "Preview only (no changes)"
+                "Preview only (no changes)",
             ],
-            default="Move to backup directory (safe)"
+            default="Move to backup directory (safe)",
         ).ask()
 
         args.backup_dir = "_backup" if "Move" in backup_choice else None
@@ -642,26 +655,21 @@ def get_interactive_config():
 
     # For sample shrinking, get all the conversion options
     args.bitdepth = questionary.select(
-        "Select target bit depth:",
-        choices=["8", "16", "24"],
-        default="16"
+        "Select target bit depth:", choices=["8", "16", "24"], default="16"
     ).ask()
     args.bitdepth = int(args.bitdepth)
 
     args.channels = questionary.select(
         "Select target channels:",
-        choices=[
-            "1 (mono)",
-            "2 (stereo)"
-        ],
-        default="2 (stereo)"
+        choices=["1 (mono)", "2 (stereo)"],
+        default="2 (stereo)",
     ).ask()
     args.channels = 1 if "1" in args.channels else 2
 
     args.samplerate = questionary.select(
         "Select target sample rate:",
         choices=["22050", "44100", "48000"],
-        default="44100"
+        default="44100",
     ).ask()
     args.samplerate = int(args.samplerate)
 
@@ -673,28 +681,25 @@ def get_interactive_config():
             "Pre-normalize before conversion",
             "Skip generating spectrograms",
             "Preview changes (dry run)",
-            "Process files in parallel"
-        ]
+            "Process files in parallel",
+        ],
     ).ask()
 
     args.auto_mono = "Auto-convert stereo to mono when possible" in advanced_options
     args.pre_normalize = "Pre-normalize before conversion" in advanced_options
     args.skip_spectrograms = "Skip generating spectrograms" in advanced_options
     args.dry_run = "Preview changes (dry run)" in advanced_options
-    
+
     if "Process files in parallel" in advanced_options:
         args.jobs = questionary.select(
-            "How many parallel jobs?",
-            choices=["2", "4", "8", "16"],
-            default="4"
+            "How many parallel jobs?", choices=["2", "4", "8", "16"], default="4"
         ).ask()
         args.jobs = int(args.jobs)
 
     if args.auto_mono:
         args.auto_mono_threshold = float(
             questionary.text(
-                "Auto-mono threshold in dB (default: -95.5):",
-                default="-95.5"
+                "Auto-mono threshold in dB (default: -95.5):", default="-95.5"
             ).ask()
         )
 
@@ -705,66 +710,70 @@ def process_duplicates(args):
     """Process both directory and file level duplicates with safety checks."""
     print("\nPhase 1: Searching for duplicate directories...")
     dir_duplicates = find_duplicate_directories(args.files)
-    
+
     if dir_duplicates:
-        print(f"\nFound {sum(len(v) - 1 for v in dir_duplicates.values())} duplicate directories")
-        
+        print(
+            f"\nFound {sum(len(v) - 1 for v in dir_duplicates.values())} duplicate directories"
+        )
+
         # Safety check: Verify directory contents match exactly
         verified_duplicates = {}
         for key, paths in dir_duplicates.items():
             dir_name, file_count, total_size = key
-            
+
             # Get file listing for each directory
             dir_contents = defaultdict(list)
             for path in paths:
-                files = sorted(f.relative_to(path) for f in path.rglob("*") if f.is_file())
+                files = sorted(
+                    f.relative_to(path) for f in path.rglob("*") if f.is_file()
+                )
                 content_hash = hashlib.sha256(str(files).encode()).hexdigest()
                 dir_contents[content_hash].append(path)
-            
+
             # Only keep directories with exactly matching contents
             for content_hash, matching_paths in dir_contents.items():
                 if len(matching_paths) > 1:
                     verified_duplicates[key + (content_hash,)] = matching_paths
-        
+
         if args.dry_run:
             print("\nDRY RUN - No directories will be moved")
         process_duplicate_directories(verified_duplicates, args)
     else:
         print("No duplicate directories found.")
-    
+
     print("\nPhase 2: Searching for duplicate files...")
     file_duplicates, fuzzy_groups = find_duplicate_files(args.files, args)
-    
+
     if file_duplicates:
         total_duplicates = sum(len(group) - 1 for group in file_duplicates)
         print(f"\nFound {total_duplicates} duplicate files")
-        
+
         # Additional safety checks for file processing
         safe_duplicates = []
         for group in file_duplicates:
             # Verify files are not symbolic links
             real_files = [f for f in group if not f.is_symlink()]
-            
+
             # Check if files are in use (on Windows) or locked
             available_files = []
             for file in real_files:
                 try:
-                    with open(file, 'rb') as f:
+                    with open(file, "rb") as f:
                         # Try to get a shared lock
                         pass
                     available_files.append(file)
                 except (IOError, OSError):
                     print(f"Warning: File {file} appears to be in use, skipping")
-            
+
             if len(available_files) > 1:
                 safe_duplicates.append(available_files)
-        
+
         if args.dry_run:
             print("\nDRY RUN - No files will be moved")
         process_duplicate_files(safe_duplicates, fuzzy_groups, args)
     else:
         print("No duplicate files found.")
-    
+
     print("\nDuplicate removal complete!")
 
 
@@ -776,7 +785,7 @@ def main():
     else:
         # Use interactive mode
         action, args = get_interactive_config()
-        
+
     if not args:
         return
 
