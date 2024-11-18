@@ -206,22 +206,19 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
         else:
             console.print(f"Processing file: [cyan]{file_path}[/cyan]")
 
+        # First check if file needs processing
         try:
             audio = AudioSegment.from_file(file_path)
-        except (IndexError, OSError) as e:
-            console.print(f"[red]Error loading {file_path}: {str(e)}[/red]")
-            console.print("[yellow]Attempting to re-encode file...[/yellow]")
-            reencoded_file = reencode_audio(file_path)
-            if reencoded_file:
-                try:
-                    audio = AudioSegment.from_file(reencoded_file)
-                except Exception as re_err:
-                    console.print(
-                        f"[red]Failed to process re-encoded file: {str(re_err)}[/red]"
-                    )
-                    return
-            else:
+            # Skip if file already meets our requirements
+            if (audio.sample_width * 8 <= args.bitdepth and 
+                audio.channels <= args.channels and 
+                audio.frame_rate <= args.samplerate and
+                (not args.min_samplerate or audio.frame_rate >= args.min_samplerate)):
+                console.print(f"[blue]Skipping {file_path} (already meets requirements)[/blue]")
                 return
+        except Exception as e:
+            console.print(f"[yellow]Error checking file {file_path}: {str(e)}[/yellow]")
+            # Continue with processing if we can't check the file
 
         modified = False
         change_reason = []
@@ -288,11 +285,10 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
                         file_path_obj = Path(file_path).resolve()
                         backup_base = Path(args.backup_dir).resolve()
                         
-                        # Get the relative path from the current working directory
-                        rel_path = file_path_obj.relative_to(Path.cwd())
-                        
-                        # Create the full backup path maintaining directory structure
-                        backup_path = backup_base / rel_path
+                        # Get the relative structure from the file path
+                        # Use the last few components of the path to maintain structure
+                        path_parts = file_path_obj.parts[-3:]  # Adjust number as needed
+                        backup_path = backup_base.joinpath(*path_parts)
                         
                         # Ensure the backup directory exists
                         backup_path.parent.mkdir(parents=True, exist_ok=True)
