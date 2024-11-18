@@ -9,6 +9,7 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+import subprocess
 
 import librosa
 import matplotlib.pyplot as plt
@@ -135,22 +136,40 @@ def delete_resource_forks(directory):
 def reencode_audio(file_path):
     """Re-encode audio file to PCM 16-bit if it has a different encoding."""
     try:
-        with sf.SoundFile(file_path) as f:
-            print(
-                f"Audio encoding: {f.format}, subtype: {f.subtype}, channels: {f.channels}"
-            )
-            if f.subtype != "PCM_16":
-                # If the file is not PCM 16, re-save it as PCM_16
-                data, samplerate = sf.read(file_path)
-                temp_output = file_path.replace(
-                    os.path.splitext(file_path)[1], "_reencoded.wav"
-                )
-                sf.write(temp_output, data, samplerate, subtype="PCM_16")
-                print(f"File re-encoded to PCM_16: {file_path} -> {temp_output}")
-                return temp_output
+        output_path = str(Path(file_path).with_suffix('.reencoded.wav'))
+        # Use ffmpeg directly for more reliable conversion
+        cmd = [
+            'ffmpeg', '-y',
+            '-i', str(file_path),
+            '-acodec', 'pcm_s16le',
+            '-ar', '44100',
+            output_path
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            console.print(f"[green]Successfully re-encoded: {output_path}[/green]")
+            return output_path
+        else:
+            console.print(f"[red]FFmpeg error: {result.stderr}[/red]")
+            return None
     except Exception as e:
-        print(f"Error re-encoding {file_path}: {e}")
-    return None
+        console.print(f"[red]Error re-encoding {file_path}: {str(e)}[/red]")
+        return None
+
+
+def check_ffmpeg():
+    """Check if ffmpeg is available and properly installed."""
+    try:
+        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+        return True
+    except (subprocess.SubprocessError, FileNotFoundError):
+        console.print("[red]Error: ffmpeg is not installed or not found in PATH[/red]")
+        console.print("Please install ffmpeg:")
+        console.print("  MacOS: brew install ffmpeg")
+        console.print("  Ubuntu/Debian: sudo apt install ffmpeg")
+        console.print("  Windows: https://ffmpeg.org/download.html")
+        return False
 
 
 def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
@@ -160,8 +179,22 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
             progress.update(task_id, description=f"Processing: {Path(file_path).name}")
         else:
             console.print(f"Processing file: [cyan]{file_path}[/cyan]")
+        
+        try:
+            audio = AudioSegment.from_file(file_path)
+        except (IndexError, OSError) as e:
+            console.print(f"[red]Error loading {file_path}: {str(e)}[/red]")
+            console.print("[yellow]Attempting to re-encode file...[/yellow]")
+            reencoded_file = reencode_audio(file_path)
+            if reencoded_file:
+                try:
+                    audio = AudioSegment.from_file(reencoded_file)
+                except Exception as re_err:
+                    console.print(f"[red]Failed to process re-encoded file: {str(re_err)}[/red]")
+                    return
+            else:
+                return
             
-        audio = AudioSegment.from_file(file_path)
         modified = False
         change_reason = []
 
@@ -246,18 +279,10 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
             console.print(status)
 
     except Exception as e:
-        console.print(f"[red]Error processing {file_path}: {e}[/red]")
-
-        # Try re-encoding the file if ffmpeg failed
-        reencoded_file = reencode_audio(file_path)
-        if reencoded_file:
-            try:
-                # Retry the process with the re-encoded file
-                process_audio(reencoded_file, args, dry_run)
-            except Exception as retry_error:
-                console.print(
-                    f"[red]Failed to process the re-encoded file {reencoded_file}: {retry_error}[/red]"
-                )
+        console.print(f"[red]Error processing {file_path}: {str(e)}[/red]")
+        console.print(f"[yellow]Stack trace:[/yellow]")
+        import traceback
+        console.print(traceback.format_exc())
 
 
 def check_effectively_mono(audio, threshold_dB):
@@ -920,6 +945,10 @@ def process_duplicates(args):
 
 
 def main():
+    # Check for ffmpeg first
+    if not check_ffmpeg():
+        return
+
     # Check if command line arguments were provided
     if len(sys.argv) > 1:
         args = parse_args()
