@@ -741,6 +741,8 @@ def save_config(args, action):
             'skip_spectrograms': args.skip_spectrograms,
             'pre_normalize': args.pre_normalize,
             'jobs': args.jobs,
+            'ext': getattr(args, 'ext', "wav,mp3"),
+            'verbose': getattr(args, 'verbose', False),
             # Duplicate removal specific settings
             'use_fuzzy': getattr(args, 'use_fuzzy', False),
             'ignore_names': getattr(args, 'ignore_names', False),
@@ -788,7 +790,7 @@ def get_interactive_config():
 
     # ... rest of path collection code ...
 
-    # Create a namespace object with saved defaults
+    # Create a namespace object with ALL default values
     args = argparse.Namespace()
     args.files = paths
     args.backup_dir = saved_config.get('backup_dir', "_backup")
@@ -802,6 +804,9 @@ def get_interactive_config():
     args.skip_spectrograms = saved_config.get('skip_spectrograms', False)
     args.pre_normalize = saved_config.get('pre_normalize', False)
     args.jobs = saved_config.get('jobs', 1)
+    args.ext = saved_config.get('ext', "wav,mp3")
+    args.verbose = saved_config.get('verbose', False)
+    args.list = False
 
     if action == "Remove duplicate directories":
         # Use saved defaults for duplicate options
