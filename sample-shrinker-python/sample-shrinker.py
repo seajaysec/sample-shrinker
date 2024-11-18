@@ -14,7 +14,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import questionary
 import soundfile as sf
-import ssdeep  # Add to imports
+import scipy.signal
+from scipy.io import wavfile
 from pydub import AudioSegment
 
 
@@ -364,11 +365,63 @@ def is_audio_file(file_path):
     return file_path.lower().endswith((".wav", ".mp3"))
 
 
+def get_audio_fingerprint(file_path):
+    """Generate an audio fingerprint using cross-correlation."""
+    try:
+        # Load audio file
+        audio = AudioSegment.from_file(file_path)
+        # Convert to mono for comparison
+        if audio.channels > 1:
+            audio = audio.set_channels(1)
+        
+        # Convert to numpy array
+        samples = np.array(audio.get_array_of_samples())
+        
+        # Normalize
+        samples = samples / np.max(np.abs(samples))
+        
+        # Get a signature using peaks in frequency domain
+        freqs, times, spectrogram = scipy.signal.spectrogram(
+            samples,
+            audio.frame_rate,
+            nperseg=1024,
+            noverlap=512
+        )
+        
+        # Get the strongest frequencies
+        peaks = np.mean(spectrogram, axis=1)
+        # Normalize the peaks
+        peaks = peaks / np.max(peaks)
+        
+        return peaks
+    except Exception as e:
+        print(f"Error generating audio fingerprint for {file_path}: {e}")
+        return None
+
+
+def compare_audio_similarity(file1_fingerprint, file2_fingerprint):
+    """Compare two audio fingerprints and return similarity score."""
+    if file1_fingerprint is None or file2_fingerprint is None:
+        return 0
+    
+    # Ensure same length for comparison
+    min_len = min(len(file1_fingerprint), len(file2_fingerprint))
+    f1 = file1_fingerprint[:min_len]
+    f2 = file2_fingerprint[:min_len]
+    
+    # Calculate correlation coefficient
+    correlation = np.corrcoef(f1, f2)[0, 1]
+    # Convert to percentage and handle NaN
+    similarity = float(max(0, correlation) * 100)
+    return similarity if not np.isnan(similarity) else 0
+
+
 def find_duplicate_files(paths, args):
-    """Find duplicate files using a multi-stage approach with optional fuzzy matching."""
+    """Find duplicate files using a multi-stage approach with audio fingerprinting."""
     print("Scanning for duplicate files...")
     size_groups = defaultdict(list)
-
+    
+    # First pass: group by size
     for path in paths:
         path = Path(path)
         if path.is_dir():
@@ -378,80 +431,68 @@ def find_duplicate_files(paths, args):
                         print(f"Scanning: {file_path}")
                     size = file_path.stat().st_size
                     size_groups[size].append(file_path)
-
+    
     hash_groups = defaultdict(list)
-    fuzzy_groups = []
-
+    similar_groups = []
+    
+    # Second pass: check content
     for size, file_paths in size_groups.items():
         if len(file_paths) > 1:
             if args.verbose:
                 print(f"\nChecking {len(file_paths)} files of size {size} bytes...")
-
-            # First pass: exact matches
+            
+            # First try exact matches
             for file_path in file_paths:
                 try:
                     file_hash = get_file_hash(file_path, fuzzy=False)
                     if args.ignore_names:
-                        # Use only the hash for grouping if ignoring names
                         hash_groups[file_hash].append(file_path)
                     else:
-                        # Include name in grouping key
                         name_key = file_path.stem.lower()
                         hash_groups[(name_key, file_hash)].append(file_path)
                 except Exception as e:
                     print(f"Error hashing file {file_path}: {e}")
-
-            # Second pass: fuzzy matching if enabled
+            
+            # Then check for similar audio content
             if args.use_fuzzy:
-                unmatched = [
-                    f
-                    for f in file_paths
-                    if not any(f in g for g in hash_groups.values() if len(g) > 1)
-                ]
+                unmatched = [f for f in file_paths 
+                           if not any(f in g for g in hash_groups.values() if len(g) > 1)]
+                
                 if len(unmatched) > 1:
-                    fuzzy_matches = defaultdict(list)
-
+                    # Generate fingerprints for all unmatched files
+                    fingerprints = {}
                     for file_path in unmatched:
-                        try:
-                            audio = AudioSegment.from_file(str(file_path))
-                            fuzzy_key = []
-
-                            if "Compare file lengths" in args.fuzzy_options:
-                                fuzzy_key.append(len(audio))
-                            if "Compare sample rates" in args.fuzzy_options:
-                                fuzzy_key.append(audio.frame_rate)
-                            if "Compare channel counts" in args.fuzzy_options:
-                                fuzzy_key.append(audio.channels)
-
-                            fuzzy_hash = get_file_hash(file_path, fuzzy=True)
-                            if fuzzy_hash:
-                                fuzzy_matches[(tuple(fuzzy_key), fuzzy_hash)].append(
-                                    file_path
+                        fingerprint = get_audio_fingerprint(file_path)
+                        if fingerprint is not None:
+                            fingerprints[file_path] = fingerprint
+                    
+                    # Compare fingerprints
+                    processed = set()
+                    for file1 in fingerprints:
+                        if file1 in processed:
+                            continue
+                        
+                        similar_files = [file1]
+                        for file2 in fingerprints:
+                            if file2 != file1 and file2 not in processed:
+                                similarity = compare_audio_similarity(
+                                    fingerprints[file1],
+                                    fingerprints[file2]
                                 )
-                        except Exception as e:
-                            print(f"Error analyzing {file_path}: {e}")
-
-                    # Compare fuzzy matches
-                    for key, matches in fuzzy_matches.items():
-                        if len(matches) > 1:
-                            base_hash = get_file_hash(matches[0], fuzzy=True)
-                            similar_files = [matches[0]]
-
-                            for other_file in matches[1:]:
-                                other_hash = get_file_hash(other_file, fuzzy=True)
-                                similarity = ssdeep.compare(base_hash, other_hash)
                                 if similarity >= args.fuzzy_threshold:
-                                    similar_files.append(other_file)
-
-                            if len(similar_files) > 1:
-                                fuzzy_groups.append(similar_files)
-
-    # Combine results based on exact and fuzzy matches
+                                    similar_files.append(file2)
+                                    processed.add(file2)
+                        
+                        if len(similar_files) > 1:
+                            similar_groups.append(similar_files)
+                            processed.add(file1)
+    
+    # Combine results
     duplicates = [group for group in hash_groups.values() if len(group) > 1]
     if args.use_fuzzy:
-        duplicates.extend(fuzzy_groups)
-
-    return duplicates, fuzzy_groups
+        duplicates.extend(similar_groups)
+    
+    return duplicates, similar_groups
 
 
 def process_duplicate_files(duplicates, fuzzy_groups, args):
