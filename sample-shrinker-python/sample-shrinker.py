@@ -270,27 +270,23 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
                 # Backup handling
                 if args.backup_dir != "-":
                     try:
-                        # Convert the file path to a Path object
+                        # Convert paths to Path objects
                         file_path_obj = Path(file_path).resolve()
-                        # Get the absolute path to the backup directory
-                        backup_dir = Path(args.backup_dir).resolve()
-
-                        # Create the relative path structure
-                        rel_path = file_path_obj.relative_to(file_path_obj.parent)
-                        backup_path = backup_dir / rel_path.parent.name / rel_path.name
-
+                        backup_base = Path(args.backup_dir).resolve()
+                        
+                        # Get the relative path from the current working directory
+                        rel_path = file_path_obj.relative_to(Path.cwd())
+                        
+                        # Create the full backup path maintaining directory structure
+                        backup_path = backup_base / rel_path
+                        
                         # Ensure the backup directory exists
                         backup_path.parent.mkdir(parents=True, exist_ok=True)
-
-                        # Add .old extension for the backup
-                        backup_path = backup_path.with_suffix(
-                            backup_path.suffix + ".old"
-                        )
-
+                        
                         # Copy the original file with metadata preserved
                         console.print(f"[cyan]Backing up to: {backup_path}[/cyan]")
                         shutil.copy2(file_path, backup_path)
-
+                        
                         # Generate spectrograms if enabled
                         if not args.skip_spectrograms:
                             try:
@@ -323,8 +319,6 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
                 except Exception as e:
                     console.print(f"[red]Error saving converted file: {str(e)}[/red]")
                     if args.verbose:
-                        import traceback
-
                         console.print(traceback.format_exc())
         else:
             status = Text()
