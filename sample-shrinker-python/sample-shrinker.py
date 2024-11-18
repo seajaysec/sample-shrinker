@@ -18,6 +18,11 @@ import soundfile as sf
 import scipy.signal
 from scipy.io import wavfile
 from pydub import AudioSegment
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.panel import Panel
+from rich.text import Text
+from rich import print as rprint
 
 
 def usage_intro():
@@ -145,10 +150,14 @@ def reencode_audio(file_path):
     return None
 
 
-def process_audio(file_path, args, dry_run=False):
+def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
     """Main function to process audio files based on arguments."""
     try:
-        print(f"Processing file: {file_path}")
+        if progress:
+            progress.update(task_id, description=f"Processing: {Path(file_path).name}")
+        else:
+            console.print(f"Processing file: [cyan]{file_path}[/cyan]")
+            
         audio = AudioSegment.from_file(file_path)
         modified = False
         change_reason = []
@@ -201,7 +210,12 @@ def process_audio(file_path, args, dry_run=False):
             modified = True
 
         if modified:
-            print(f"{file_path} [CHANGED]: {', '.join(change_reason)}")
+            status = Text()
+            status.append(f"{file_path} ", style="cyan")
+            status.append("[CHANGED]: ", style="yellow")
+            status.append(", ".join(change_reason), style="green")
+            console.print(status)
+            
             if not dry_run:
                 # Backup the original file if required
                 if args.backup_dir != "-":
@@ -223,10 +237,13 @@ def process_audio(file_path, args, dry_run=False):
                         file_path, output_file, os.path.dirname(backup_path)
                     )
         else:
-            print(f"{file_path} [UNCHANGED]")
+            status = Text()
+            status.append(f"{file_path} ", style="cyan")
+            status.append("[UNCHANGED]", style="blue")
+            console.print(status)
 
     except Exception as e:
-        print(f"Error processing {file_path}: {e}")
+        console.print(f"[red]Error processing {file_path}: {e}[/red]")
 
         # Try re-encoding the file if ffmpeg failed
         reencoded_file = reencode_audio(file_path)
@@ -235,8 +252,8 @@ def process_audio(file_path, args, dry_run=False):
                 # Retry the process with the re-encoded file
                 process_audio(reencoded_file, args, dry_run)
             except Exception as retry_error:
-                print(
-                    f"Failed to process the re-encoded file {reencoded_file}: {retry_error}"
+                console.print(
+                    f"[red]Failed to process the re-encoded file {reencoded_file}: {retry_error}[/red]"
                 )
 
 
@@ -313,22 +330,38 @@ def collect_files(args):
 
 
 def run_in_parallel(file_list, args):
-    """Run the audio processing in parallel."""
+    """Run the audio processing in parallel with progress bar."""
     try:
-        with ThreadPoolExecutor(max_workers=args.jobs) as executor:
-            futures = {
-                executor.submit(process_audio, file, args): file for file in file_list
-            }
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    result = (
-                        future.result()
-                    )  # Get the result of the future (processed file)
-                except Exception as exc:
-                    file = futures[future]
-                    print(f"File {file} generated an exception: {exc}")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Processing files...", total=len(file_list))
+            
+            with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+                futures = {
+                    executor.submit(
+                        process_audio, 
+                        file, 
+                        args,
+                        task_id=task,
+                        progress=progress
+                    ): file for file in file_list
+                }
+                
+                for future in concurrent.futures.as_completed(futures):
+                    progress.advance(task)
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        file = futures[future]
+                        console.print(f"[red]File {file} generated an exception: {exc}[/red]")
+                        
     except KeyboardInterrupt:
-        print("Received KeyboardInterrupt, attempting to cancel all threads...")
+        console.print("[yellow]Received KeyboardInterrupt, attempting to cancel all threads...[/yellow]")
         executor.shutdown(wait=False, cancel_futures=True)
         raise
 
@@ -794,47 +827,32 @@ def get_interactive_config():
 
 
 def process_duplicates(args):
-    """Process both directory and file level duplicates with safety checks."""
-    print("\nPhase 1: Searching for duplicate directories...")
-    dir_duplicates = find_duplicate_directories(args.files)
+    """Process both directory and file level duplicates with visual feedback."""
+    with console.status("[bold green]Phase 1: Searching for duplicate directories...") as status:
+        dir_duplicates = find_duplicate_directories(args.files)
 
     if dir_duplicates:
-        print(
-            f"\nFound {sum(len(v) - 1 for v in dir_duplicates.values())} duplicate directories"
-        )
-
-        # Safety check: Verify directory contents match exactly
-        verified_duplicates = {}
-        for key, paths in dir_duplicates.items():
-            dir_name, file_count, total_size = key
-
-            # Get file listing for each directory
-            dir_contents = defaultdict(list)
-            for path in paths:
-                files = sorted(
-                    f.relative_to(path) for f in path.rglob("*") if f.is_file()
-                )
-                content_hash = hashlib.sha256(str(files).encode()).hexdigest()
-                dir_contents[content_hash].append(path)
-
-            # Only keep directories with exactly matching contents
-            for content_hash, matching_paths in dir_contents.items():
-                if len(matching_paths) > 1:
-                    verified_duplicates[key + (content_hash,)] = matching_paths
-
+        count = sum(len(v) - 1 for v in dir_duplicates.values())
+        console.print(Panel(f"Found [cyan]{count}[/cyan] duplicate directories", 
+                          title="Directory Scan Complete"))
+        
         if args.dry_run:
-            print("\nDRY RUN - No directories will be moved")
+            console.print("[yellow]DRY RUN - No directories will be moved[/yellow]")
         process_duplicate_directories(verified_duplicates, args)
     else:
-        print("No duplicate directories found.")
+        console.print("[blue]No duplicate directories found.[/blue]")
 
-    print("\nPhase 2: Searching for duplicate files...")
-    file_duplicates, fuzzy_groups = find_duplicate_files(args.files, args)
+    with console.status("[bold green]Phase 2: Searching for duplicate files...") as status:
+        file_duplicates, fuzzy_groups = find_duplicate_files(args.files, args)
 
     if file_duplicates:
         total_duplicates = sum(len(group) - 1 for group in file_duplicates)
-        print(f"\nFound {total_duplicates} duplicate files")
-
+        console.print(Panel(
+            f"Found [cyan]{total_duplicates}[/cyan] duplicate files\n"
+            f"Including [cyan]{len(fuzzy_groups)}[/cyan] groups of similar files",
+            title="File Scan Complete"
+        ))
+        
         # Additional safety checks for file processing
         safe_duplicates = []
         for group in file_duplicates:
@@ -856,12 +874,12 @@ def process_duplicates(args):
                 safe_duplicates.append(available_files)
 
         if args.dry_run:
-            print("\nDRY RUN - No files will be moved")
+            console.print("[yellow]DRY RUN - No files will be moved[/yellow]")
         process_duplicate_files(safe_duplicates, fuzzy_groups, args)
     else:
-        print("No duplicate files found.")
+        console.print("[blue]No duplicate files found.[/blue]")
 
-    print("\nDuplicate removal complete!")
+    console.print("[green]Duplicate removal complete![/green]")
 
 
 def main():
