@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import hashlib
 import filecmp
+import ssdeep  # Add to imports
 
 import librosa
 import matplotlib.pyplot as plt
@@ -330,6 +331,140 @@ def run_in_parallel(file_list, args):
         raise
 
 
+def get_file_hash(file_path, fuzzy=False, chunk_size=1024*1024):
+    """Calculate file hash using either SHA-256 or fuzzy hashing."""
+    if fuzzy:
+        try:
+            # Generate fuzzy hash for the file
+            return ssdeep.hash_from_file(str(file_path))
+        except Exception as e:
+            print(f"Error generating fuzzy hash for {file_path}: {e}")
+            return None
+    else:
+        # Standard SHA-256 hash with quick check
+        sha256_hash = hashlib.sha256()
+        file_size = os.path.getsize(file_path)
+        
+        with open(file_path, "rb") as f:
+            # Read first chunk
+            first_chunk = f.read(chunk_size)
+            sha256_hash.update(first_chunk)
+            
+            # If file is large enough, read last chunk
+            if file_size > chunk_size * 2:
+                f.seek(-chunk_size, 2)
+                last_chunk = f.read(chunk_size)
+                sha256_hash.update(last_chunk)
+                
+            return sha256_hash.hexdigest()
+
+def is_audio_file(file_path):
+    """Check if file is an audio file we want to process."""
+    return file_path.lower().endswith(('.wav', '.mp3'))
+
+def find_duplicate_files(paths, fuzzy_threshold=90):
+    """Find duplicate files using a multi-stage approach with optional fuzzy matching."""
+    # Stage 1: Group by size (fast)
+    size_groups = defaultdict(list)
+    
+    for path in paths:
+        path = Path(path)
+        if path.is_dir():
+            for file_path in path.rglob("*"):
+                if file_path.is_file() and is_audio_file(str(file_path)):
+                    size = file_path.stat().st_size
+                    size_groups[size].append(file_path)
+    
+    # Stage 2: For same-size files, group by quick hash
+    hash_groups = defaultdict(list)
+    fuzzy_groups = []  # Store groups of similar files
+    
+    for size, file_paths in size_groups.items():
+        if len(file_paths) > 1:  # Only process groups with potential duplicates
+            # First, try exact matches
+            for file_path in file_paths:
+                try:
+                    file_hash = get_file_hash(file_path, fuzzy=False)
+                    hash_groups[file_hash].append(file_path)
+                except Exception as e:
+                    print(f"Error hashing file {file_path}: {e}")
+            
+            # Then, try fuzzy matching for files that weren't exact matches
+            unmatched_files = [f for f in file_paths if not any(f in group for group in hash_groups.values() if len(group) > 1)]
+            if len(unmatched_files) > 1:
+                fuzzy_matches = defaultdict(list)
+                for file_path in unmatched_files:
+                    fuzzy_hash = get_file_hash(file_path, fuzzy=True)
+                    if fuzzy_hash:
+                        fuzzy_matches[file_path] = fuzzy_hash
+                
+                # Compare fuzzy hashes
+                matched = set()
+                for file1, hash1 in fuzzy_matches.items():
+                    if file1 in matched:
+                        continue
+                    similar_files = [file1]
+                    for file2, hash2 in fuzzy_matches.items():
+                        if file2 != file1 and file2 not in matched:
+                            similarity = ssdeep.compare(hash1, hash2)
+                            if similarity >= fuzzy_threshold:
+                                similar_files.append(file2)
+                                matched.add(file2)
+                    if len(similar_files) > 1:
+                        fuzzy_groups.append(similar_files)
+                        matched.add(file1)
+    
+    # Combine exact and fuzzy matches
+    duplicates = [group for group in hash_groups.values() if len(group) > 1]
+    duplicates.extend(fuzzy_groups)
+    
+    return duplicates, fuzzy_groups
+
+def process_duplicate_files(duplicates, fuzzy_groups, args):
+    """Process duplicate files with enhanced reporting."""
+    for group in duplicates:
+        is_fuzzy = group in fuzzy_groups
+        match_type = "similar" if is_fuzzy else "identical"
+        
+        # Get file size for reporting
+        file_size = group[0].stat().st_size
+        print(f"\nFound {match_type} files: '{group[0].name}' ({file_size} bytes)")
+        
+        if is_fuzzy:
+            # For fuzzy matches, show similarity percentages
+            base_hash = get_file_hash(group[0], fuzzy=True)
+            print("Similarity scores:")
+            for file in group[1:]:
+                file_hash = get_file_hash(file, fuzzy=True)
+                similarity = ssdeep.compare(base_hash, file_hash)
+                print(f"  {file.name}: {similarity}% similar")
+        
+        # Sort files by creation time
+        files_with_time = [(f, f.stat().st_ctime) for f in group]
+        files_with_time.sort(key=lambda x: x[1])
+        
+        # Keep the oldest file
+        original_file = files_with_time[0][0]
+        print(f"Keeping oldest copy: {original_file} (created: {time.ctime(files_with_time[0][1])})")
+        
+        # Process newer copies
+        for file_path, ctime in files_with_time[1:]:
+            print(f"Moving {match_type} file: {file_path} (created: {time.ctime(ctime)})")
+            if not args.dry_run:
+                try:
+                    # Create backup path maintaining directory structure
+                    rel_path = file_path.relative_to(file_path.parent.parent)
+                    backup_path = Path(args.backup_dir) / rel_path
+                    
+                    # Ensure backup directory exists
+                    backup_path.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    # Move the file
+                    shutil.move(str(file_path), str(backup_path))
+                except Exception as e:
+                    print(f"Error moving file {file_path}: {e}")
+
+
 def find_duplicate_directories(paths):
     """Find directories with matching names and file counts."""
     dir_map = defaultdict(list)
@@ -525,7 +660,7 @@ def process_duplicates(args):
         print("No duplicate directories found.")
     
     print("\nPhase 2: Searching for duplicate files...")
-    file_duplicates = find_duplicate_files(args.files)
+    file_duplicates, fuzzy_groups = find_duplicate_files(args.files)
     
     if file_duplicates:
         total_duplicates = sum(len(group) - 1 for group in file_duplicates)
@@ -553,7 +688,7 @@ def process_duplicates(args):
         
         if args.dry_run:
             print("\nDRY RUN - No files will be moved")
-        process_duplicate_files(safe_duplicates, args)
+        process_duplicate_files(safe_duplicates, fuzzy_groups, args)
     else:
         print("No duplicate files found.")
     
