@@ -733,18 +733,28 @@ def get_interactive_config():
                 default=["Compare file lengths", "Compare sample rates"],
             ).ask()
 
-        # Get backup options
+        # Get backup options (moved before backup_choice)
+        backup_dir = questionary.text(
+            "Backup directory path:",
+            default="_backup",
+            description="Directory where duplicates will be moved"
+        ).ask()
+        
+        if backup_dir.strip():  # If not empty
+            args.backup_dir = backup_dir.strip()
+        else:
+            args.backup_dir = "_backup"  # Fallback to default
+
         backup_choice = questionary.select(
             "How should duplicates be handled?",
             choices=[
-                "Move to backup directory (safe)",
+                f"Move to {args.backup_dir} (safe)",
                 "Delete immediately (dangerous)",
                 "Preview only (no changes)",
             ],
-            default="Move to backup directory (safe)",
+            default=f"Move to {args.backup_dir} (safe)",
         ).ask()
 
-        args.backup_dir = "_backup" if "Move" in backup_choice else None
         args.delete_duplicates = "Delete" in backup_choice
         args.dry_run = "Preview" in backup_choice
 
@@ -794,8 +804,9 @@ def get_interactive_config():
     if "Process files in parallel" in advanced_options:
         args.jobs = questionary.select(
             "How many parallel jobs?", 
-            choices=["2", "4", "8", "16"], 
-            default="4"
+            choices=["2", "4", "8", "16", "24", "32", "48", "64"], 
+            default="4",
+            description="Higher values may improve speed but use more memory"
         ).ask()
         args.jobs = int(args.jobs)
 
