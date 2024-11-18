@@ -1403,13 +1403,21 @@ def process_directory_group(dir_name, file_count, total_size, paths, args, progr
         valid_paths = []
         for path in paths:
             try:
-                if not path.exists():
+                # Wait briefly for cloud storage to download if needed
+                retries = 3
+                while retries > 0:
+                    if path.exists():
+                        stat = path.stat()
+                        valid_paths.append((path, stat.st_ctime))
+                        break
+                    retries -= 1
+                    if retries > 0:
+                        time.sleep(1)  # Wait a second before retry
+
+                if retries == 0:
                     console.print(
-                        f"[yellow]Warning: Directory not found: {path}[/yellow]"
+                        f"[yellow]Warning: Directory not available after retries: {path}[/yellow]"
                     )
-                    continue
-                stat = path.stat()
-                valid_paths.append((path, stat.st_ctime))
             except (FileNotFoundError, OSError) as e:
                 console.print(
                     f"[yellow]Warning: Cannot access directory {path}: {e}[/yellow]"
@@ -1432,9 +1440,10 @@ def process_directory_group(dir_name, file_count, total_size, paths, args, progr
         # Process newer copies
         for dir_path, ctime in valid_paths[1:]:
             try:
+                # Check again before processing as cloud storage might have changed
                 if not dir_path.exists():
                     console.print(
-                        f"[yellow]Warning: Directory disappeared: {dir_path}[/yellow]"
+                        f"[yellow]Skipping unavailable directory: {dir_path}[/yellow]"
                     )
                     continue
 
