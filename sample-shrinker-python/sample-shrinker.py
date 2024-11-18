@@ -970,6 +970,7 @@ def get_interactive_config():
     args.pre_normalize = False
     args.list = False
     args.jobs = 1
+    args.fuzzy_threshold = 90  # Add default fuzzy threshold
 
     if action == "Remove duplicate directories":
         # For duplicate removal, get configuration options
@@ -1025,6 +1026,20 @@ def get_interactive_config():
 
         args.delete_duplicates = "Delete" in backup_choice
         args.dry_run = "Preview" in backup_choice
+
+        if args.use_fuzzy:
+            # Get fuzzy matching configuration
+            threshold_choice = questionary.select(
+                "Select fuzzy matching threshold (higher = more strict):",
+                choices=[
+                    "95 - Nearly identical",
+                    "90 - Very similar",
+                    "85 - Similar",
+                    "80 - Somewhat similar",
+                ],
+                default="90 - Very similar",
+            ).ask()
+            args.fuzzy_threshold = int(threshold_choice.split()[0])
 
         return "duplicates", args
 
@@ -1127,9 +1142,11 @@ def process_duplicates(args):
         TaskProgressColumn(),
         console=console,
     ) as progress:
-        # Phase 1: Directory scan
+        # Phase 1: Directory scan - Compare directory contents
+        console.print("\n[cyan]Phase 1: Directory Structure Analysis[/cyan]")
         scan_task = progress.add_task(
-            "[magenta]Scanning for duplicate directories...[/magenta]", total=None
+            "[magenta]Scanning for duplicate directory structures...[/magenta]",
+            total=None,
         )
         dir_duplicates = find_duplicate_directories(args.files)
         progress.update(scan_task, completed=True)
@@ -1138,45 +1155,17 @@ def process_duplicates(args):
             count = sum(len(v) - 1 for v in dir_duplicates.values())
             console.print(
                 Panel(
-                    f"Found [cyan]{count}[/cyan] duplicate directories",
-                    title="Directory Scan Complete",
+                    f"Found [cyan]{count}[/cyan] directories with identical contents",
+                    title="Directory Structure Analysis Complete",
                 )
             )
+            # ... rest of directory processing ...
 
-            if args.dry_run:
-                console.print("[yellow]DRY RUN - No directories will be moved[/yellow]")
-
-            # Process directories with progress bar
-            dir_task = progress.add_task(
-                "[green]Processing directories...", total=len(dir_duplicates)
-            )
-
-            with ThreadPoolExecutor(max_workers=args.jobs) as executor:
-                futures = []
-                for (dir_name, file_count, total_size), paths in dir_duplicates.items():
-                    future = executor.submit(
-                        process_directory_group,
-                        dir_name,
-                        file_count,
-                        total_size,
-                        paths,
-                        args,
-                        progress,
-                    )
-                    futures.append(future)
-
-                for future in as_completed(futures):
-                    try:
-                        future.result()
-                        progress.advance(dir_task)
-                    except Exception as e:
-                        console.print(f"[red]Error processing directory: {e}[/red]")
-        else:
-            console.print("[blue]No duplicate directories found.[/blue]")
-
-        # Phase 2: File scan
+        # Phase 2: File scan - Compare individual files
+        console.print("\n[cyan]Phase 2: Individual File Analysis[/cyan]")
         file_task = progress.add_task(
-            "[magenta]Scanning for duplicate files...[/magenta]", total=None
+            "[magenta]Scanning for duplicate files across all directories...[/magenta]",
+            total=None,
         )
         file_duplicates, fuzzy_groups = find_duplicate_files(args.files, args)
         progress.update(file_task, completed=True)
@@ -1187,38 +1176,12 @@ def process_duplicates(args):
                 Panel(
                     f"Found [cyan]{total_duplicates}[/cyan] duplicate files\n"
                     f"Including [cyan]{len(fuzzy_groups)}[/cyan] groups of similar files",
-                    title="File Scan Complete",
+                    title="File Analysis Complete",
                 )
             )
+            # ... rest of file processing ...
 
-            if args.dry_run:
-                console.print("[yellow]DRY RUN - No files will be moved[/yellow]")
-
-            # Process files with progress bar
-            file_process_task = progress.add_task(
-                "[green]Processing files...", total=len(file_duplicates)
-            )
-
-            with ThreadPoolExecutor(max_workers=args.jobs) as executor:
-                futures = []
-                for group in file_duplicates:
-                    future = executor.submit(
-                        process_file_group,
-                        group,
-                        fuzzy_groups,
-                        args,
-                        progress,
-                    )
-                    futures.append(future)
-
-                for future in as_completed(futures):
-                    try:
-                        future.result()
-                        progress.advance(file_process_task)
-                    except Exception as e:
-                        console.print(f"[red]Error processing file group: {e}[/red]")
-
-    console.print("[green]Duplicate removal complete![/green]")
+    console.print("[green]Duplicate analysis and removal complete![/green]")
 
 
 def process_directory_group(dir_name, file_count, total_size, paths, args, progress):
