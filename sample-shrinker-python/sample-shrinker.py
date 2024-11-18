@@ -639,11 +639,22 @@ def get_interactive_config():
     args = argparse.Namespace()
     args.files = paths
 
-    # Set defaults
+    # Set ALL default values (matching parse_args defaults)
     args.backup_dir = "_backup"
     args.dry_run = False
     args.verbose = False
     args.ext = "wav,mp3"
+    args.bitdepth = 16
+    args.min_bitdepth = None
+    args.channels = 2
+    args.samplerate = 44100
+    args.min_samplerate = None
+    args.auto_mono = False
+    args.auto_mono_threshold = -95.5
+    args.skip_spectrograms = False
+    args.pre_normalize = False
+    args.list = False
+    args.jobs = 1
 
     if action == "Remove duplicate directories":
         # For duplicate removal, get configuration options
@@ -708,7 +719,9 @@ def get_interactive_config():
 
     # For sample shrinking, get all the conversion options
     args.bitdepth = questionary.select(
-        "Select target bit depth:", choices=["8", "16", "24"], default="16"
+        "Select target bit depth:", 
+        choices=["8", "16", "24"], 
+        default="16"
     ).ask()
     args.bitdepth = int(args.bitdepth)
 
@@ -735,6 +748,8 @@ def get_interactive_config():
             "Skip generating spectrograms",
             "Preview changes (dry run)",
             "Process files in parallel",
+            "Set minimum sample rate",
+            "Set minimum bit depth"
         ],
     ).ask()
 
@@ -745,14 +760,33 @@ def get_interactive_config():
 
     if "Process files in parallel" in advanced_options:
         args.jobs = questionary.select(
-            "How many parallel jobs?", choices=["2", "4", "8", "16"], default="4"
+            "How many parallel jobs?", 
+            choices=["2", "4", "8", "16"], 
+            default="4"
         ).ask()
         args.jobs = int(args.jobs)
+
+    if "Set minimum sample rate" in advanced_options:
+        args.min_samplerate = questionary.select(
+            "Select minimum sample rate:",
+            choices=["22050", "44100", "48000"],
+            default="22050"
+        ).ask()
+        args.min_samplerate = int(args.min_samplerate)
+
+    if "Set minimum bit depth" in advanced_options:
+        args.min_bitdepth = questionary.select(
+            "Select minimum bit depth:",
+            choices=["8", "16", "24"],
+            default="16"
+        ).ask()
+        args.min_bitdepth = int(args.min_bitdepth)
 
     if args.auto_mono:
         args.auto_mono_threshold = float(
             questionary.text(
-                "Auto-mono threshold in dB (default: -95.5):", default="-95.5"
+                "Auto-mono threshold in dB (default: -95.5):", 
+                default="-95.5"
             ).ask()
         )
 
