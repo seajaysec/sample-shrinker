@@ -12,6 +12,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import librosa
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import numpy as np
 import questionary
@@ -345,33 +347,42 @@ def check_effectively_mono(audio, threshold_dB):
 
 def generate_spectrogram(original_file, new_file, backup_dir):
     """Generate and save spectrograms for the original and new files."""
-    y_old, sr_old = librosa.load(original_file, sr=None)
-    y_new, sr_new = librosa.load(new_file, sr=None)
+    try:
+        y_old, sr_old = librosa.load(original_file, sr=None)
+        y_new, sr_new = librosa.load(new_file, sr=None)
 
-    # Spectrogram for original file
-    plt.figure(figsize=(10, 4))
-    D_old = librosa.amplitude_to_db(np.abs(librosa.stft(y_old)), ref=np.max)
-    librosa.display.specshow(D_old, sr=sr_old, x_axis="time", y_axis="log")
-    plt.colorbar(format="%+2.0f dB")
-    plt.title(f"Spectrogram of {os.path.basename(original_file)}")
-    old_spectrogram_path = os.path.join(
-        backup_dir, os.path.basename(original_file) + ".old.png"
-    )
-    os.makedirs(backup_dir, exist_ok=True)  # Ensure the directory exists
-    plt.savefig(old_spectrogram_path)
-    plt.close()
+        # Ensure the backup directory exists
+        os.makedirs(backup_dir, exist_ok=True)
 
-    # Spectrogram for new file
-    plt.figure(figsize=(10, 4))
-    D_new = librosa.amplitude_to_db(np.abs(librosa.stft(y_new)), ref=np.max)
-    librosa.display.specshow(D_new, sr=sr_new, x_axis="time", y_axis="log")
-    plt.colorbar(format="%+2.0f dB")
-    plt.title(f"Spectrogram of {os.path.basename(new_file)}")
-    new_spectrogram_path = os.path.join(
-        backup_dir, os.path.basename(new_file) + ".new.png"
-    )
-    plt.savefig(new_spectrogram_path)
-    plt.close()
+        # Generate spectrogram for original file
+        plt.figure(figsize=(10, 4))
+        D_old = librosa.amplitude_to_db(np.abs(librosa.stft(y_old)), ref=np.max)
+        librosa.display.specshow(D_old, sr=sr_old, x_axis="time", y_axis="log")
+        plt.colorbar(format="%+2.0f dB")
+        plt.title(f"Spectrogram of {os.path.basename(original_file)}")
+        old_spectrogram_path = os.path.join(
+            backup_dir, os.path.basename(original_file) + ".old.png"
+        )
+        plt.savefig(old_spectrogram_path)
+        plt.close('all')  # Explicitly close all figures
+
+        # Generate spectrogram for new file
+        plt.figure(figsize=(10, 4))
+        D_new = librosa.amplitude_to_db(np.abs(librosa.stft(y_new)), ref=np.max)
+        librosa.display.specshow(D_new, sr=sr_new, x_axis="time", y_axis="log")
+        plt.colorbar(format="%+2.0f dB")
+        plt.title(f"Spectrogram of {os.path.basename(new_file)}")
+        new_spectrogram_path = os.path.join(
+            backup_dir, os.path.basename(new_file) + ".new.png"
+        )
+        plt.savefig(new_spectrogram_path)
+        plt.close('all')  # Explicitly close all figures
+
+    except Exception as e:
+        console.print(f"[red]Error generating spectrograms: {str(e)}[/red]")
+        if args.verbose:
+            import traceback
+            console.print(traceback.format_exc())
 
 
 def list_files(args, file_list):
