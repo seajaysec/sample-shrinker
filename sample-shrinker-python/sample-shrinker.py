@@ -293,21 +293,27 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
 
                         # Generate spectrograms if enabled
                         if not args.skip_spectrograms:
-                            generate_spectrogram(
-                                file_path, file_path, backup_path.parent
-                            )
+                            try:
+                                generate_spectrogram(
+                                    file_path, 
+                                    file_path, 
+                                    backup_path.parent,
+                                    verbose=args.verbose
+                                )
+                            except Exception as spec_err:
+                                console.print(f"[yellow]Warning: Could not generate spectrograms: {spec_err}[/yellow]")
+                                if args.verbose:
+                                    import traceback
+                                    console.print(traceback.format_exc())
 
                     except Exception as e:
                         console.print(f"[red]Error creating backup: {str(e)}[/red]")
                         if args.verbose:
                             import traceback
-
                             console.print(traceback.format_exc())
                         return
                 else:
-                    console.print(
-                        "[yellow]No backup created (backups disabled)[/yellow]"
-                    )
+                    console.print("[yellow]No backup created (backups disabled)[/yellow]")
 
                 # Export the converted audio file
                 try:
@@ -345,7 +351,7 @@ def check_effectively_mono(audio, threshold_dB):
     return peak_diff_db < threshold_dB
 
 
-def generate_spectrogram(original_file, new_file, backup_dir):
+def generate_spectrogram(original_file, new_file, backup_dir, verbose=False):
     """Generate and save spectrograms for the original and new files."""
     try:
         y_old, sr_old = librosa.load(original_file, sr=None)
@@ -380,7 +386,7 @@ def generate_spectrogram(original_file, new_file, backup_dir):
 
     except Exception as e:
         console.print(f"[red]Error generating spectrograms: {str(e)}[/red]")
-        if args.verbose:
+        if verbose:
             import traceback
             console.print(traceback.format_exc())
 
