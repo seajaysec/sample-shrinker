@@ -819,7 +819,8 @@ def get_interactive_config():
                 "Preview changes (dry run)",
                 "Show detailed progress",
             ],
-            default=saved_duplicate_options
+            # Only use default if we have valid saved options
+            **({"default": saved_duplicate_options} if saved_duplicate_options else {})
         ).ask()
 
         # ... rest of duplicate removal configuration ...
@@ -827,19 +828,25 @@ def get_interactive_config():
     else:  # Sample shrinking
         # Use saved defaults for advanced options
         saved_advanced = saved_config.get('advanced_options', [])
+        # Validate saved options against available choices
+        available_choices = [
+            "Auto-convert stereo to mono when possible",
+            "Pre-normalize before conversion",
+            "Skip generating spectrograms",
+            "Preview changes (dry run)",
+            "Process files in parallel",
+            "Set minimum sample rate",
+            "Set minimum bit depth",
+            "Convert in place (no backups)",
+        ]
+        # Only keep valid saved options
+        valid_saved = [opt for opt in saved_advanced if opt in available_choices]
+        
         advanced_options = questionary.checkbox(
             "Select additional options:",
-            choices=[
-                "Auto-convert stereo to mono when possible",
-                "Pre-normalize before conversion",
-                "Skip generating spectrograms",
-                "Preview changes (dry run)",
-                "Process files in parallel",
-                "Set minimum sample rate",
-                "Set minimum bit depth",
-                "Convert in place (no backups)",
-            ],
-            default=saved_advanced
+            choices=available_choices,
+            # Only use default if we have valid saved options
+            **({"default": valid_saved} if valid_saved else {})
         ).ask()
         
         # Store selected options for next time
