@@ -53,7 +53,10 @@ def parse_args():
     )
     parser.add_argument("-R", "--min_samplerate", type=int, help="Minimum sample rate")
     parser.add_argument(
-        "-x", "--ext", default="wav", help="File extension to search for (default: wav)"
+        "-x",
+        "--ext",
+        default="wav,mp3",
+        help="Comma-separated file extensions to search for (default: wav,mp3)",
     )
     parser.add_argument(
         "-a",
@@ -276,16 +279,26 @@ def list_files(args, file_list):
 
 
 def collect_files(args):
-    """Collect all files from provided directories and files, skipping resource fork files."""
+    """Collect all wav and mp3 files from provided directories and files."""
     file_list = []
+    # Split extensions string into a list and clean up whitespace
+    valid_extensions = [ext.strip().lower() for ext in args.ext.split(",")]
+
     for path in args.files:
         if os.path.isdir(path):
             for root, dirs, files in os.walk(path):
                 for file in files:
-                    if file.endswith(f".{args.ext}") and not file.startswith("._"):
+                    file_lower = file.lower()
+                    # Check if file ends with any of the valid extensions
+                    if any(
+                        file_lower.endswith(f".{ext}") for ext in valid_extensions
+                    ) and not file.startswith("._"):
                         file_list.append(os.path.join(root, file))
         elif os.path.isfile(path):
-            if not os.path.basename(path).startswith("._"):
+            file_lower = path.lower()
+            if any(
+                file_lower.endswith(f".{ext}") for ext in valid_extensions
+            ) and not os.path.basename(path).startswith("._"):
                 file_list.append(path)
     return file_list
 
