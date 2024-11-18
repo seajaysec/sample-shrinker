@@ -235,28 +235,28 @@ def needs_conversion(file_path, args):
     """Check if file needs conversion based on its properties."""
     props = get_audio_properties(file_path)
     if not props:
-        return True  # If we can't read properties, attempt conversion
+        return (True, ["unable to read properties"])  # Return tuple with reason
 
-    needs_conversion = False
+    needs_conv = False
     reasons = []
 
     if props["bit_depth"] > args.bitdepth:
-        needs_conversion = True
+        needs_conv = True
         reasons.append(f"bit depth {props['bit_depth']} -> {args.bitdepth}")
 
     if props["channels"] > args.channels:
-        needs_conversion = True
+        needs_conv = True
         reasons.append(f"channels {props['channels']} -> {args.channels}")
 
     if props["sample_rate"] > args.samplerate:
-        needs_conversion = True
+        needs_conv = True
         reasons.append(f"sample rate {props['sample_rate']} -> {args.samplerate}")
 
     if args.min_samplerate and props["sample_rate"] < args.min_samplerate:
-        needs_conversion = True
+        needs_conv = True
         reasons.append(f"sample rate {props['sample_rate']} -> {args.min_samplerate}")
 
-    return needs_conversion, reasons
+    return (needs_conv, reasons)  # Always return a tuple
 
 
 def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
@@ -267,6 +267,24 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
         else:
             console.print(f"Processing file: [cyan]{file_path}[/cyan]")
 
+        # Load the audio file first
+        try:
+            audio = AudioSegment.from_file(file_path)
+        except Exception as e:
+            console.print(f"[yellow]Error loading {file_path}: {str(e)}[/yellow]")
+            console.print("[yellow]Attempting to re-encode file...[/yellow]")
+            reencoded_file = reencode_audio(file_path)
+            if reencoded_file:
+                try:
+                    audio = AudioSegment.from_file(reencoded_file)
+                except Exception as re_err:
+                    console.print(
+                        f"[red]Failed to process re-encoded file: {str(re_err)}[/red]"
+                    )
+                    return
+            else:
+                return
+
         # Check if file needs processing
         needs_conv, reasons = needs_conversion(file_path, args)
         if not needs_conv:
@@ -276,7 +294,7 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
             return
 
         modified = False
-        change_reason = []
+        change_reason = reasons.copy()  # Use the reasons from needs_conversion
 
         # Check if we need to convert the channels
         if audio.channels > args.channels:
