@@ -831,9 +831,7 @@ def get_interactive_config():
         # ... rest of duplicate removal configuration ...
 
     else:  # Sample shrinking
-        # Use saved defaults for advanced options
-        saved_advanced = saved_config.get('advanced_options', [])
-        # Validate saved options against available choices
+        # Define available choices first
         available_choices = [
             "Auto-convert stereo to mono when possible",
             "Pre-normalize before conversion",
@@ -844,18 +842,82 @@ def get_interactive_config():
             "Set minimum bit depth",
             "Convert in place (no backups)",
         ]
-        # Only keep valid saved options
-        valid_saved = [opt for opt in saved_advanced if opt in available_choices]
         
+        # Get saved options and validate them
+        saved_advanced = saved_config.get('advanced_options', [])
+        # Only use saved options that exist in available choices
+        valid_saved = []
+        if saved_advanced:
+            valid_saved = [opt for opt in available_choices if opt in saved_advanced]
+        
+        # Create the checkbox without conditional default
         advanced_options = questionary.checkbox(
             "Select additional options:",
             choices=available_choices,
-            # Only use default if we have valid saved options
-            **({"default": valid_saved} if valid_saved else {})
+            default=valid_saved
         ).ask()
         
         # Store selected options for next time
         args.advanced_options = advanced_options
+
+        # Process the selections
+        args.auto_mono = "Auto-convert stereo to mono when possible" in advanced_options
+        args.pre_normalize = "Pre-normalize before conversion" in advanced_options
+        args.skip_spectrograms = "Skip generating spectrograms" in advanced_options
+        args.dry_run = "Preview changes (dry run)" in advanced_options
+        convert_in_place = "Convert in place (no backups)" in advanced_options
+
+        if "Process files in parallel" in advanced_options:
+            args.jobs = questionary.select(
+                "How many parallel jobs?",
+                choices=["2", "4", "8", "16", "24", "32", "48", "64"],
+                default=str(saved_config.get('jobs', 4))
+            ).ask()
+            args.jobs = int(args.jobs)
+        else:
+            args.jobs = 1
+
+        if "Set minimum sample rate" in advanced_options:
+            args.min_samplerate = questionary.select(
+                "Select minimum sample rate:",
+                choices=["22050", "44100", "48000"],
+                default=str(saved_config.get('min_samplerate', 22050))
+            ).ask()
+            args.min_samplerate = int(args.min_samplerate)
+
+        if "Set minimum bit depth" in advanced_options:
+            args.min_bitdepth = questionary.select(
+                "Select minimum bit depth:",
+                choices=["8", "16", "24"],
+                default=str(saved_config.get('min_bitdepth', 16))
+            ).ask()
+            args.min_bitdepth = int(args.min_bitdepth)
+
+        # Configure backup settings if not converting in place
+        if not convert_in_place:
+            backup_enabled = questionary.confirm(
+                "Enable backups of original files?",
+                default=not args.backup_dir == "-"
+            ).ask()
+            
+            if backup_enabled:
+                backup_dir = questionary.text(
+                    "Backup directory path:",
+                    default=args.backup_dir if args.backup_dir != "-" else "_backup"
+                ).ask()
+                args.backup_dir = backup_dir.strip() if backup_dir.strip() else "_backup"
+                
+                if not args.skip_spectrograms:
+                    args.skip_spectrograms = not questionary.confirm(
+                        "Generate spectrograms for backup comparison?",
+                        default=True
+                    ).ask()
+            else:
+                args.backup_dir = "-"
+                args.skip_spectrograms = True
+        else:
+            args.backup_dir = "-"
+            args.skip_spectrograms = True
 
     # Save the final configuration
     save_config(args, action)
