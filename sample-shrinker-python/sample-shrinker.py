@@ -870,7 +870,7 @@ def main():
         args = parse_args()
         action = "shrink"  # Default to shrink mode for command line
     else:
-        # Use interactive mode
+        # Use interactive mode with saved configuration
         action, args = get_interactive_config()
 
     if not args:
