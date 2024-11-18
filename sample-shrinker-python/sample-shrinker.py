@@ -1278,8 +1278,79 @@ def process_directory_group(dir_name, file_count, total_size, paths, args, progr
 
 def process_file_group(group, fuzzy_groups, args, progress):
     """Process a group of duplicate files."""
-    # Similar structure to process_duplicate_files but adapted for parallel processing
-    # ... implement the file processing logic here ...
+    try:
+        # Get file size for reporting
+        file_size = group[0].stat().st_size
+        console.print(
+            f"\nProcessing duplicate group for '[cyan]{group[0].name}[/cyan]' ({file_size} bytes)"
+        )
+
+        # For fuzzy matches, show similarity percentages
+        if group in fuzzy_groups:
+            base_fingerprint = get_audio_fingerprint(group[0])
+            console.print("[cyan]Similarity scores:[/cyan]")
+            for file in group[1:]:
+                file_fingerprint = get_audio_fingerprint(file)
+                similarity = compare_audio_similarity(
+                    base_fingerprint, file_fingerprint
+                )
+                console.print(
+                    f"  {file.name}: [yellow]{similarity:.1f}%[/yellow] similar"
+                )
+
+        # Sort files by creation time
+        files_with_time = []
+        for file_path in group:
+            try:
+                stat = file_path.stat()
+                files_with_time.append((file_path, stat.st_ctime))
+            except FileNotFoundError:
+                console.print(f"[yellow]Warning: File not found: {file_path}[/yellow]")
+                continue
+
+        if not files_with_time:
+            console.print("[red]No valid files found in group[/red]")
+            return
+
+        files_with_time.sort(key=lambda x: x[1])
+
+        # Keep the oldest file
+        original_file = files_with_time[0][0]
+        console.print(
+            f"Keeping oldest copy: [green]{original_file}[/green] "
+            f"(created: {time.ctime(files_with_time[0][1])})"
+        )
+
+        # Process newer copies
+        for file_path, ctime in files_with_time[1:]:
+            console.print(
+                f"Processing duplicate: [yellow]{file_path}[/yellow] "
+                f"(created: {time.ctime(ctime)})"
+            )
+
+            if not args.dry_run:
+                try:
+                    if args.delete_duplicates:
+                        console.print(f"[red]Deleting: {file_path}[/red]")
+                        file_path.unlink()
+                    else:
+                        # Create backup path maintaining directory structure
+                        rel_path = file_path.relative_to(file_path.parent.parent)
+                        backup_path = Path(args.backup_dir) / rel_path
+
+                        # Ensure backup directory exists
+                        backup_path.parent.mkdir(parents=True, exist_ok=True)
+
+                        # Move the file
+                        console.print(f"Moving to: [blue]{backup_path}[/blue]")
+                        shutil.move(str(file_path), str(backup_path))
+
+                except Exception as e:
+                    console.print(f"[red]Error processing file {file_path}: {e}[/red]")
+
+    except Exception as e:
+        console.print(f"[red]Error processing file group: {e}[/red]")
+        raise
 
 
 def main():
