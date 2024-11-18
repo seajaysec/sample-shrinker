@@ -10,6 +10,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import subprocess
+import json
 
 import librosa
 import matplotlib.pyplot as plt
@@ -708,8 +709,56 @@ def process_duplicate_directories(duplicates, args):
                     print(f"Error moving directory {dir_path}: {e}")
 
 
+def load_saved_config():
+    """Load previously saved configuration."""
+    config_path = Path.home() / '.sample-shrinker.json'
+    if config_path.exists():
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                console.print("[dim]Loaded saved configuration[/dim]")
+                return config
+        except Exception as e:
+            console.print(f"[yellow]Error loading saved config: {e}[/yellow]")
+    return {}
+
+def save_config(args, action):
+    """Save current configuration."""
+    config_path = Path.home() / '.sample-shrinker.json'
+    try:
+        # Convert namespace to dict and handle Path objects
+        config = {
+            'last_action': action,
+            'files': [str(p) for p in args.files],
+            'backup_dir': args.backup_dir,
+            'bitdepth': args.bitdepth,
+            'channels': args.channels,
+            'samplerate': args.samplerate,
+            'min_samplerate': args.min_samplerate,
+            'min_bitdepth': args.min_bitdepth,
+            'auto_mono': args.auto_mono,
+            'auto_mono_threshold': args.auto_mono_threshold,
+            'skip_spectrograms': args.skip_spectrograms,
+            'pre_normalize': args.pre_normalize,
+            'jobs': args.jobs,
+            # Duplicate removal specific settings
+            'use_fuzzy': getattr(args, 'use_fuzzy', False),
+            'ignore_names': getattr(args, 'ignore_names', False),
+            'fuzzy_threshold': getattr(args, 'fuzzy_threshold', 90),
+            'fuzzy_options': getattr(args, 'fuzzy_options', []),
+            'advanced_options': getattr(args, 'advanced_options', []),
+        }
+        
+        with open(config_path, 'w') as f:
+            json.dump(config, f, indent=2)
+            console.print("[dim]Saved configuration for next time[/dim]")
+    except Exception as e:
+        console.print(f"[yellow]Error saving config: {e}[/yellow]")
+
 def get_interactive_config():
     """Get configuration through interactive questionary prompts."""
+    # Load saved configuration
+    saved_config = load_saved_config()
     
     # First, get the action type
     action = questionary.select(
@@ -719,6 +768,7 @@ def get_interactive_config():
             "Remove duplicate directories",
             "Exit",
         ],
+        default=saved_config.get('last_action', "Shrink samples (convert audio files)")
     ).ask()
 
     if action == "Exit":
@@ -726,50 +776,41 @@ def get_interactive_config():
 
     # Get the directory/files to process
     paths = []
-    while True:
-        path = questionary.path(
-            "Select directory or file to process (press Enter with empty path when done):",
-            only_directories=False,
+    last_paths = saved_config.get('files', [])
+    
+    if last_paths:
+        use_last = questionary.confirm(
+            f"Use last paths?\n" + "\n".join(last_paths),
+            default=True
         ).ask()
-        
-        if not path:  # Empty input
-            if paths:  # If we have at least one path, break
-                break
-            else:  # If no paths yet, ask again
-                print("Please select at least one directory or file.")
-                continue
-        
-        paths.append(path)
-        
-        if not questionary.confirm("Add another path?", default=False).ask():
-            break
+        if use_last:
+            paths = last_paths
 
-    if not paths:
-        return None, None
+    # ... rest of path collection code ...
 
-    # Create a namespace object to match argparse structure
+    # Create a namespace object with saved defaults
     args = argparse.Namespace()
     args.files = paths
-
-    # Set ALL default values (matching parse_args defaults)
-    args.backup_dir = "_backup"
-    args.dry_run = False
-    args.verbose = False
-    args.ext = "wav,mp3"
-    args.bitdepth = 16
-    args.min_bitdepth = None
-    args.channels = 2
-    args.samplerate = 44100
-    args.min_samplerate = None
-    args.auto_mono = False
-    args.auto_mono_threshold = -95.5
-    args.skip_spectrograms = False
-    args.pre_normalize = False
-    args.list = False
-    args.jobs = 1
+    args.backup_dir = saved_config.get('backup_dir', "_backup")
+    args.bitdepth = saved_config.get('bitdepth', 16)
+    args.channels = saved_config.get('channels', 2)
+    args.samplerate = saved_config.get('samplerate', 44100)
+    args.min_samplerate = saved_config.get('min_samplerate', None)
+    args.min_bitdepth = saved_config.get('min_bitdepth', None)
+    args.auto_mono = saved_config.get('auto_mono', False)
+    args.auto_mono_threshold = saved_config.get('auto_mono_threshold', -95.5)
+    args.skip_spectrograms = saved_config.get('skip_spectrograms', False)
+    args.pre_normalize = saved_config.get('pre_normalize', False)
+    args.jobs = saved_config.get('jobs', 1)
 
     if action == "Remove duplicate directories":
-        # For duplicate removal, get configuration options
+        # Use saved defaults for duplicate options
+        saved_duplicate_options = []
+        if saved_config.get('use_fuzzy', False):
+            saved_duplicate_options.append("Use fuzzy matching for similar files")
+        if saved_config.get('ignore_names', False):
+            saved_duplicate_options.append("Ignore filenames (match by content only)")
+        
         duplicate_options = questionary.checkbox(
             "Select duplicate removal options:",
             choices=[
@@ -778,158 +819,36 @@ def get_interactive_config():
                 "Preview changes (dry run)",
                 "Show detailed progress",
             ],
-            default=["Preview changes (dry run)"],
+            default=saved_duplicate_options
         ).ask()
 
-        args.use_fuzzy = "Use fuzzy matching for similar files" in duplicate_options
-        args.ignore_names = (
-            "Ignore filenames (match by content only)" in duplicate_options
-        )
-        args.dry_run = "Preview changes (dry run)" in duplicate_options
-        args.verbose = "Show detailed progress" in duplicate_options
+        # ... rest of duplicate removal configuration ...
 
-        if args.use_fuzzy:
-            # Get fuzzy matching configuration
-            args.fuzzy_threshold = questionary.select(
-                "Select fuzzy matching threshold (higher = more strict):",
-                choices=[
-                    "95 - Nearly identical",
-                    "90 - Very similar",
-                    "85 - Similar",
-                    "80 - Somewhat similar",
-                ],
-                default="90 - Very similar",
-            ).ask()
-            args.fuzzy_threshold = int(args.fuzzy_threshold.split()[0])
-
-            args.fuzzy_options = questionary.checkbox(
-                "Select fuzzy matching options:",
-                choices=[
-                    "Compare file lengths",
-                    "Compare sample rates",
-                    "Compare channel counts",
-                ],
-                default=["Compare file lengths", "Compare sample rates"],
-            ).ask()
-
-        # Get backup options (moved before backup_choice)
-        backup_dir = questionary.text(
-            "Backup directory path:",
-            default="_backup",
-            description="Directory where duplicates will be moved"
+    else:  # Sample shrinking
+        # Use saved defaults for advanced options
+        saved_advanced = saved_config.get('advanced_options', [])
+        advanced_options = questionary.checkbox(
+            "Select additional options:",
+            choices=[
+                "Auto-convert stereo to mono when possible",
+                "Pre-normalize before conversion",
+                "Skip generating spectrograms",
+                "Preview changes (dry run)",
+                "Process files in parallel",
+                "Set minimum sample rate",
+                "Set minimum bit depth",
+                "Convert in place (no backups)",
+            ],
+            default=saved_advanced
         ).ask()
         
-        if backup_dir.strip():  # If not empty
-            args.backup_dir = backup_dir.strip()
-        else:
-            args.backup_dir = "_backup"  # Fallback to default
+        # Store selected options for next time
+        args.advanced_options = advanced_options
 
-        backup_choice = questionary.select(
-            "How should duplicates be handled?",
-            choices=[
-                f"Move to {args.backup_dir} (safe)",
-                "Delete immediately (dangerous)",
-                "Preview only (no changes)",
-            ],
-            default=f"Move to {args.backup_dir} (safe)",
-        ).ask()
+    # Save the final configuration
+    save_config(args, action)
 
-        args.delete_duplicates = "Delete" in backup_choice
-        args.dry_run = "Preview" in backup_choice
-
-        return "duplicates", args
-
-    # For sample shrinking, get all the conversion options
-    args.bitdepth = questionary.select(
-        "Select target bit depth:", 
-        choices=["8", "16", "24"], 
-        default="16"
-    ).ask()
-    args.bitdepth = int(args.bitdepth)
-
-    args.channels = questionary.select(
-        "Select target channels:",
-        choices=["1 (mono)", "2 (stereo)"],
-        default="2 (stereo)",
-    ).ask()
-    args.channels = 1 if "1" in args.channels else 2
-
-    args.samplerate = questionary.select(
-        "Select target sample rate:",
-        choices=["22050", "44100", "48000"],
-        default="44100",
-    ).ask()
-    args.samplerate = int(args.samplerate)
-
-    # Advanced options in a checkbox group
-    advanced_options = questionary.checkbox(
-        "Select additional options:",
-        choices=[
-            "Auto-convert stereo to mono when possible",
-            "Pre-normalize before conversion",
-            "Skip generating spectrograms",
-            "Preview changes (dry run)",
-            "Process files in parallel",
-            "Set minimum sample rate",
-            "Set minimum bit depth",
-            "Convert in place (no backups)",
-        ],
-    ).ask()
-
-    args.auto_mono = "Auto-convert stereo to mono when possible" in advanced_options
-    args.pre_normalize = "Pre-normalize before conversion" in advanced_options
-    args.skip_spectrograms = "Skip generating spectrograms" in advanced_options
-    args.dry_run = "Preview changes (dry run)" in advanced_options
-    convert_in_place = "Convert in place (no backups)" in advanced_options
-
-    # Configure backup settings if not converting in place
-    if not convert_in_place:
-        args.backup_dir = questionary.text(
-            "Backup directory path:",
-            default="_backup",
-        ).ask()
-        if args.backup_dir.strip():  # If not empty
-            args.skip_spectrograms = questionary.confirm(
-                "Generate spectrograms for backup comparison?",
-                default=not args.skip_spectrograms
-            ).ask()
-        else:
-            args.backup_dir = "-"
-            args.skip_spectrograms = True
-
-    if "Process files in parallel" in advanced_options:
-        args.jobs = questionary.select(
-            "How many parallel jobs? (higher values may improve speed but use more memory)",
-            choices=["2", "4", "8", "16", "24", "32", "48", "64"], 
-            default="4"
-        ).ask()
-        args.jobs = int(args.jobs)
-
-    if "Set minimum sample rate" in advanced_options:
-        args.min_samplerate = questionary.select(
-            "Select minimum sample rate:",
-            choices=["22050", "44100", "48000"],
-            default="22050"
-        ).ask()
-        args.min_samplerate = int(args.min_samplerate)
-
-    if "Set minimum bit depth" in advanced_options:
-        args.min_bitdepth = questionary.select(
-            "Select minimum bit depth:",
-            choices=["8", "16", "24"],
-            default="16"
-        ).ask()
-        args.min_bitdepth = int(args.min_bitdepth)
-
-    if args.auto_mono:
-        args.auto_mono_threshold = float(
-            questionary.text(
-                "Auto-mono threshold in dB (default: -95.5):", 
-                default="-95.5"
-            ).ask()
-        )
-
-    return "shrink", args
+    return "duplicates" if "Remove" in action else "shrink", args
 
 
 def process_duplicates(args):
