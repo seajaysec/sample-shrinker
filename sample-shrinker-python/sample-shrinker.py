@@ -1225,6 +1225,8 @@ def process_duplicates(args):
 
     # Phase 2: File scan - Compare individual files
     console.print("\n[cyan]Phase 2: Individual File Analysis[/cyan]")
+
+    # Step 1: Initial file scanning
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -1233,65 +1235,158 @@ def process_duplicates(args):
         TextColumn("{task.completed}/{task.total} files"),
         console=console,
     ) as progress:
-        # First count total files for progress
         total_files = sum(
             1
             for path_str in args.files
             for _ in Path(path_str).rglob("*")
-            if Path(_).is_file()  # Check if the found item is a file
+            if Path(_).is_file()
         )
-        file_task = progress.add_task(
-            "[magenta]Scanning for duplicate files across all directories...[/magenta]",
+        scan_task = progress.add_task(
+            "[magenta]Scanning filesystem for files...[/magenta]",
             total=total_files,
         )
 
-        # Modify find_duplicate_files to update progress
-        file_duplicates, fuzzy_groups = find_duplicate_files(
-            args.files, args, progress, file_task
+        # First pass: collect files and group by size
+        size_groups = defaultdict(list)
+        scanned = 0
+        for path_str in args.files:
+            path = Path(path_str)
+            if path.is_dir():
+                for file_path in path.rglob("*"):
+                    if file_path.is_file() and is_audio_file(str(file_path)):
+                        scanned += 1
+                        progress.update(scan_task, completed=scanned)
+                        size_groups[file_path.stat().st_size].append(file_path)
+
+    # Step 2: Similarity analysis
+    potential_duplicates = {
+        size: files for size, files in size_groups.items() if len(files) > 1
+    }
+    total_to_check = sum(len(files) for files in potential_duplicates.values())
+
+    file_duplicates = []
+    fuzzy_groups = []
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("{task.completed}/{task.total} files"),
+        console=console,
+    ) as progress:
+        check_task = progress.add_task(
+            "[magenta]Analyzing files for duplicates...[/magenta]",
+            total=total_to_check,
         )
-        progress.update(file_task, completed=total_files)
 
-        if file_duplicates:
-            total_duplicates = sum(len(group) - 1 for group in file_duplicates)
-            console.print(
-                Panel(
-                    f"Found [cyan]{total_duplicates}[/cyan] duplicate files\n"
-                    f"Including [cyan]{len(fuzzy_groups)}[/cyan] groups of similar files",
-                    title="File Analysis Complete",
+        checked = 0
+        for size, file_paths in potential_duplicates.items():
+            if args.verbose:
+                console.print(
+                    f"\nChecking {len(file_paths)} files of size {size} bytes..."
                 )
-            )
-            if not args.dry_run:
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    BarColumn(),
-                    TaskProgressColumn(),
-                    TextColumn("{task.completed}/{task.total} duplicates"),
-                    console=console,
-                ) as progress:
-                    file_process_task = progress.add_task(
-                        "[green]Processing files...", total=total_duplicates
-                    )
-                    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
-                        futures = []
-                        for group in file_duplicates:
-                            future = executor.submit(
-                                process_file_group,
-                                group,
-                                fuzzy_groups,
-                                args,
-                                progress,
-                            )
-                            futures.append(future)
 
-                        for future in as_completed(futures):
-                            try:
-                                future.result()
-                                progress.advance(file_process_task)
-                            except Exception as e:
-                                console.print(
-                                    f"[red]Error processing file group: {e}[/red]"
+            # Group files by hash first
+            hash_groups = defaultdict(list)
+            for file_path in file_paths:
+                try:
+                    file_hash = get_file_hash(file_path, fuzzy=False)
+                    if args.ignore_names:
+                        hash_groups[file_hash].append(file_path)
+                    else:
+                        name_key = file_path.stem.lower()
+                        hash_groups[(name_key, file_hash)].append(file_path)
+                    checked += 1
+                    progress.update(check_task, completed=checked)
+                except Exception as e:
+                    console.print(f"[red]Error hashing file {file_path}: {e}[/red]")
+
+            # Add exact matches to results
+            for group in hash_groups.values():
+                if len(group) > 1:
+                    file_duplicates.append(group)
+
+            # Check for similar audio content if enabled
+            if args.use_fuzzy:
+                # Get unmatched files (not in any exact match group)
+                unmatched = [
+                    f for f in file_paths if not any(f in g for g in file_duplicates)
+                ]
+
+                if len(unmatched) > 1:
+                    fingerprints = {}
+                    for file_path in unmatched:
+                        fingerprint = get_audio_fingerprint(file_path)
+                        if fingerprint is not None:
+                            fingerprints[file_path] = fingerprint
+
+                    # Compare fingerprints
+                    processed = set()
+                    for file1 in fingerprints:
+                        if file1 in processed:
+                            continue
+
+                        similar_files = [file1]
+                        for file2 in fingerprints:
+                            if file2 != file1 and file2 not in processed:
+                                similarity = compare_audio_similarity(
+                                    fingerprints[file1], fingerprints[file2]
                                 )
+                                if similarity >= args.fuzzy_threshold:
+                                    similar_files.append(file2)
+                                    processed.add(file2)
+
+                        if len(similar_files) > 1:
+                            fuzzy_groups.append(similar_files)
+                            file_duplicates.append(similar_files)
+                            processed.add(file1)
+
+    # Report results and process duplicates
+    if file_duplicates:
+        total_duplicates = sum(len(group) - 1 for group in file_duplicates)
+        console.print(
+            Panel(
+                f"Found [cyan]{total_duplicates}[/cyan] duplicate files\n"
+                f"Including [cyan]{len(fuzzy_groups)}[/cyan] groups of similar files",
+                title="File Analysis Complete",
+            )
+        )
+
+        # Step 3: Process duplicates if not in dry run mode
+        if not args.dry_run:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TextColumn("{task.completed}/{task.total} duplicates"),
+                console=console,
+            ) as progress:
+                process_task = progress.add_task(
+                    "[green]Processing duplicate files...", total=total_duplicates
+                )
+
+                with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+                    futures = []
+                    for group in file_duplicates:
+                        future = executor.submit(
+                            process_file_group,
+                            group,
+                            fuzzy_groups,
+                            args,
+                            progress,
+                        )
+                        futures.append(future)
+
+                    for future in as_completed(futures):
+                        try:
+                            future.result()
+                            progress.advance(process_task)
+                        except Exception as e:
+                            console.print(
+                                f"[red]Error processing file group: {e}[/red]"
+                            )
 
     console.print("[green]Duplicate analysis and removal complete![/green]")
 
