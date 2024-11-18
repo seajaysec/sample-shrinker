@@ -146,20 +146,47 @@ def reencode_audio(file_path):
     """Re-encode audio file to PCM 16-bit if it has a different encoding."""
     try:
         output_path = str(Path(file_path).with_suffix(".reencoded.wav"))
-        # Use ffmpeg with explicit decoding and encoding parameters
+
+        # First try with ADPCM decoder explicitly
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-c:a",
+            "adpcm_ms",  # Try ADPCM first
+            "-i",
+            str(file_path),
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            "-f",
+            "wav",
+            output_path,
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            console.print(
+                f"[green]Successfully re-encoded with ADPCM decoder: {output_path}[/green]"
+            )
+            return output_path
+
+        # If ADPCM fails, try with default decoder
         cmd = [
             "ffmpeg",
             "-y",
             "-i",
             str(file_path),
             "-acodec",
-            "pcm_s16le",  # Force 16-bit PCM encoding
+            "pcm_s16le",
             "-ar",
-            "44100",  # Maintain sample rate
+            "44100",
             "-ac",
-            "2",  # Maintain stereo if present
+            "2",
             "-f",
-            "wav",  # Force WAV format
+            "wav",
             output_path,
         ]
 
@@ -167,34 +194,38 @@ def reencode_audio(file_path):
         if result.returncode == 0:
             console.print(f"[green]Successfully re-encoded: {output_path}[/green]")
             return output_path
+
+        # If both attempts fail, try with more aggressive options
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(file_path),
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            "-af",
+            "aresample=resampler=soxr",  # Use high quality resampler
+            "-strict",
+            "experimental",
+            "-f",
+            "wav",
+            output_path,
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            console.print(
+                f"[green]Successfully re-encoded with resampling: {output_path}[/green]"
+            )
+            return output_path
         else:
-            # If first attempt fails, try with different decoder
-            cmd = [
-                "ffmpeg",
-                "-y",
-                "-c:a",
-                "adpcm_ms",  # Explicitly specify ADPCM decoder
-                "-i",
-                str(file_path),
-                "-acodec",
-                "pcm_s16le",
-                "-ar",
-                "44100",
-                "-ac",
-                "2",
-                "-f",
-                "wav",
-                output_path,
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode == 0:
-                console.print(
-                    f"[green]Successfully re-encoded with ADPCM decoder: {output_path}[/green]"
-                )
-                return output_path
-            else:
-                console.print(f"[red]FFmpeg error: {result.stderr}[/red]")
-                return None
+            console.print(f"[red]FFmpeg error: {result.stderr}[/red]")
+            return None
+
     except Exception as e:
         console.print(f"[red]Error re-encoding {file_path}: {str(e)}[/red]")
         return None
@@ -217,7 +248,17 @@ def check_ffmpeg():
 def get_audio_properties(file_path):
     """Get audio file properties using pydub."""
     try:
-        audio = AudioSegment.from_file(file_path)
+        # First try direct loading
+        try:
+            audio = AudioSegment.from_file(file_path)
+        except Exception as e:
+            # If direct loading fails, try re-encoding first
+            reencoded = reencode_audio(file_path)
+            if reencoded:
+                audio = AudioSegment.from_file(reencoded)
+            else:
+                raise e
+
         return {
             "bit_depth": audio.sample_width * 8,
             "channels": audio.channels,
