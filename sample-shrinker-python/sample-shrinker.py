@@ -360,29 +360,41 @@ def generate_spectrogram(original_file, new_file, backup_dir, verbose=False):
         # Ensure the backup directory exists
         os.makedirs(backup_dir, exist_ok=True)
 
-        # Generate spectrogram for original file
-        plt.figure(figsize=(10, 4))
-        D_old = librosa.amplitude_to_db(np.abs(librosa.stft(y_old)), ref=np.max)
-        librosa.display.specshow(D_old, sr=sr_old, x_axis="time", y_axis="log")
-        plt.colorbar(format="%+2.0f dB")
-        plt.title(f"Spectrogram of {os.path.basename(original_file)}")
-        old_spectrogram_path = os.path.join(
-            backup_dir, os.path.basename(original_file) + ".old.png"
-        )
-        plt.savefig(old_spectrogram_path)
-        plt.close('all')  # Explicitly close all figures
+        # Set a reasonable n_fft based on signal length
+        n_fft = min(2048, len(y_old))
+        if n_fft % 2 != 0:  # Ensure n_fft is even
+            n_fft -= 1
 
-        # Generate spectrogram for new file
-        plt.figure(figsize=(10, 4))
-        D_new = librosa.amplitude_to_db(np.abs(librosa.stft(y_new)), ref=np.max)
-        librosa.display.specshow(D_new, sr=sr_new, x_axis="time", y_axis="log")
-        plt.colorbar(format="%+2.0f dB")
-        plt.title(f"Spectrogram of {os.path.basename(new_file)}")
-        new_spectrogram_path = os.path.join(
-            backup_dir, os.path.basename(new_file) + ".new.png"
-        )
-        plt.savefig(new_spectrogram_path)
-        plt.close('all')  # Explicitly close all figures
+        # Generate spectrogram for original file
+        with plt.ioff():  # Turn off interactive mode
+            fig = plt.figure(figsize=(10, 4))
+            D_old = librosa.amplitude_to_db(
+                np.abs(librosa.stft(y_old, n_fft=n_fft)), 
+                ref=np.max
+            )
+            librosa.display.specshow(D_old, sr=sr_old, x_axis="time", y_axis="log")
+            plt.colorbar(format="%+2.0f dB")
+            plt.title(f"Spectrogram of {os.path.basename(original_file)}")
+            old_spectrogram_path = os.path.join(
+                backup_dir, os.path.basename(original_file) + ".old.png"
+            )
+            plt.savefig(old_spectrogram_path)
+            plt.close(fig)
+
+            # Generate spectrogram for new file
+            fig = plt.figure(figsize=(10, 4))
+            D_new = librosa.amplitude_to_db(
+                np.abs(librosa.stft(y_new, n_fft=n_fft)), 
+                ref=np.max
+            )
+            librosa.display.specshow(D_new, sr=sr_new, x_axis="time", y_axis="log")
+            plt.colorbar(format="%+2.0f dB")
+            plt.title(f"Spectrogram of {os.path.basename(new_file)}")
+            new_spectrogram_path = os.path.join(
+                backup_dir, os.path.basename(new_file) + ".new.png"
+            )
+            plt.savefig(new_spectrogram_path)
+            plt.close(fig)
 
     except Exception as e:
         console.print(f"[red]Error generating spectrograms: {str(e)}[/red]")
@@ -933,10 +945,13 @@ def get_interactive_config():
             default="_backup",
         ).ask()
         if args.backup_dir.strip():  # If not empty
-            args.skip_spectrograms = questionary.confirm(
-                "Generate spectrograms for backup comparison?",
-                default=not args.skip_spectrograms,
-            ).ask()
+            args.backup_dir = args.backup_dir.strip()
+            # Only ask about spectrograms if they weren't explicitly skipped in advanced options
+            if not args.skip_spectrograms:
+                args.skip_spectrograms = not questionary.confirm(
+                    "Generate spectrograms for backup comparison?",
+                    default=False
+                ).ask()
         else:
             args.backup_dir = "-"
             args.skip_spectrograms = True
