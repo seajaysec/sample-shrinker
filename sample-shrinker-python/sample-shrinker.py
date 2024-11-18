@@ -873,8 +873,38 @@ def find_duplicate_directories(paths, progress, task_id):
     dir_map = defaultdict(list)
     scanned = 0
 
+    def get_directory_signature(dir_path):
+        """Generate a signature for a directory based on its contents."""
+        try:
+            # Get all files and subdirectories recursively
+            all_items = list(dir_path.rglob("*"))
+
+            # Count files and directories
+            files = [f for f in all_items if f.is_file()]
+            subdirs = [d for d in all_items if d.is_dir()]
+
+            # Calculate total size of all files
+            total_size = sum(f.stat().st_size for f in files)
+
+            # Get relative paths of all items for structure comparison
+            rel_paths = sorted(str(item.relative_to(dir_path)) for item in all_items)
+
+            # Get file sizes in a deterministic order
+            file_sizes = sorted(f.stat().st_size for f in files)
+
+            return {
+                "file_count": len(files),
+                "subdir_count": len(subdirs),
+                "total_size": total_size,
+                "structure": rel_paths,
+                "file_sizes": file_sizes,
+            }
+        except Exception as e:
+            console.print(f"[yellow]Error analyzing directory {dir_path}: {e}[/yellow]")
+            return None
+
     for path_str in paths:
-        path = Path(path_str)  # Convert string to Path
+        path = Path(path_str)
         if path.is_dir():
             for dir_path in path.rglob("*"):
                 if dir_path.is_dir():
@@ -882,16 +912,50 @@ def find_duplicate_directories(paths, progress, task_id):
                     scanned += 1
                     progress.update(task_id, completed=scanned)
 
-                    # Get directory name, file count, and total size
-                    dir_name = dir_path.name.lower()  # Case-insensitive comparison
-                    files = list(dir_path.glob("*"))
-                    file_count = len([f for f in files if f.is_file()])
-                    total_size = sum(f.stat().st_size for f in files if f.is_file())
-
-                    dir_map[(dir_name, file_count, total_size)].append(dir_path)
+                    # Get directory signature
+                    signature = get_directory_signature(dir_path)
+                    if signature:
+                        # Create a unique key combining name and content signature
+                        dir_name = dir_path.name.lower()  # Case-insensitive comparison
+                        key = (
+                            dir_name,
+                            signature["file_count"],
+                            signature["subdir_count"],
+                            signature["total_size"],
+                            tuple(signature["file_sizes"]),  # Make hashable
+                            tuple(signature["structure"]),  # Make hashable
+                        )
+                        dir_map[key].append(dir_path)
 
     # Return only directories that have duplicates
-    return {k: v for k, v in dir_map.items() if len(v) > 1}
+    duplicates = {k: v for k, v in dir_map.items() if len(v) > 1}
+
+    if duplicates:
+        # Log detailed information about matches
+        for (
+            name,
+            file_count,
+            subdir_count,
+            total_size,
+            sizes,
+            structure,
+        ), paths in duplicates.items():
+            console.print(
+                f"\n[cyan]Found potential duplicates:[/cyan]\n"
+                f"Directory name: [yellow]{name}[/yellow]\n"
+                f"File count: {file_count}\n"
+                f"Subdirectory count: {subdir_count}\n"
+                f"Total size: {total_size} bytes\n"
+                f"Structure match: {len(structure)} items"
+            )
+            if args.verbose:
+                console.print("Directory structure:")
+                for item in structure[:10]:  # Show first 10 items
+                    console.print(f"  {item}")
+                if len(structure) > 10:
+                    console.print("  ...")
+
+    return duplicates
 
 
 def process_duplicate_directories(duplicates, args):
