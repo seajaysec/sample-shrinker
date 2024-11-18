@@ -981,7 +981,6 @@ def get_interactive_config():
                 "Preview changes (dry run)",
                 "Show detailed progress",
             ],
-            default=["Preview changes (dry run)"],  # Use the actual choice string
         ).ask()
 
         args.use_fuzzy = "Use fuzzy matching for similar files" in duplicate_options
@@ -1012,10 +1011,6 @@ def get_interactive_config():
                     "Compare sample rates",
                     "Compare channel counts",
                 ],
-                default=[
-                    "Compare file lengths",
-                    "Compare sample rates",
-                ],  # Use actual choice strings
             ).ask()
 
         # Get backup options (moved before backup_choice)
