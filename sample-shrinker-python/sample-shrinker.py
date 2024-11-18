@@ -310,30 +310,44 @@ def list_files(args, file_list):
 def collect_files(args):
     """Collect all wav and mp3 files from provided directories and files."""
     file_list = []
-    # Split extensions string into a list and clean up whitespace
     valid_extensions = [ext.strip().lower() for ext in args.ext.split(",")]
-
+    
+    console.print("[cyan]Starting file collection...[/cyan]")
+    
     for path in args.files:
-        if os.path.isdir(path):
+        # Expand user and resolve path
+        path = os.path.expanduser(path)
+        path = os.path.expandvars(path)
+        path = Path(path).resolve()
+        
+        console.print(f"[cyan]Scanning path: {path}[/cyan]")
+        
+        if path.is_dir():
             for root, dirs, files in os.walk(path):
                 for file in files:
                     file_lower = file.lower()
-                    # Check if file ends with any of the valid extensions
-                    if any(
-                        file_lower.endswith(f".{ext}") for ext in valid_extensions
-                    ) and not file.startswith("._"):
-                        file_list.append(os.path.join(root, file))
-        elif os.path.isfile(path):
-            file_lower = path.lower()
-            if any(
-                file_lower.endswith(f".{ext}") for ext in valid_extensions
-            ) and not os.path.basename(path).startswith("._"):
-                file_list.append(path)
+                    if any(file_lower.endswith(f".{ext}") for ext in valid_extensions) and not file.startswith("._"):
+                        full_path = os.path.join(root, file)
+                        file_list.append(full_path)
+                        if args.verbose:
+                            console.print(f"[dim]Found: {full_path}[/dim]")
+        elif path.is_file():
+            file_lower = str(path).lower()
+            if any(file_lower.endswith(f".{ext}") for ext in valid_extensions) and not path.name.startswith("._"):
+                file_list.append(str(path))
+                if args.verbose:
+                    console.print(f"[dim]Found: {path}[/dim]")
+    
+    console.print(f"[green]Found {len(file_list)} files to process[/green]")
     return file_list
 
 
 def run_in_parallel(file_list, args):
     """Run the audio processing in parallel with progress bar."""
+    if not file_list:
+        console.print("[yellow]No files to process![/yellow]")
+        return
+        
     try:
         with Progress(
             SpinnerColumn(),
@@ -342,9 +356,13 @@ def run_in_parallel(file_list, args):
             TaskProgressColumn(),
             console=console,
         ) as progress:
-            task = progress.add_task("Processing files...", total=len(file_list))
+            total_files = len(file_list)
+            console.print(f"[cyan]Starting processing of {total_files} files with {args.jobs} parallel jobs[/cyan]")
+            
+            task = progress.add_task("Processing files...", total=total_files)
             
             with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+                # Submit all tasks
                 futures = {
                     executor.submit(
                         process_audio, 
@@ -355,6 +373,7 @@ def run_in_parallel(file_list, args):
                     ): file for file in file_list
                 }
                 
+                # Process completed tasks
                 for future in concurrent.futures.as_completed(futures):
                     progress.advance(task)
                     try:
@@ -362,10 +381,15 @@ def run_in_parallel(file_list, args):
                     except Exception as exc:
                         file = futures[future]
                         console.print(f"[red]File {file} generated an exception: {exc}[/red]")
+                    
+            console.print("[green]Processing complete![/green]")
                         
     except KeyboardInterrupt:
         console.print("[yellow]Received KeyboardInterrupt, attempting to cancel all threads...[/yellow]")
         executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    except Exception as e:
+        console.print(f"[red]Error in parallel processing: {e}[/red]")
         raise
 
 
