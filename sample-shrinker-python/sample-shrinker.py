@@ -1235,7 +1235,10 @@ def process_duplicates(args):
     ) as progress:
         # First count total files for progress
         total_files = sum(
-            1 for path in args.files for _ in path.rglob("*") if path.is_file()
+            1
+            for path_str in args.files
+            for _ in Path(path_str).rglob("*")
+            if Path(_).is_file()  # Check if the found item is a file
         )
         file_task = progress.add_task(
             "[magenta]Scanning for duplicate files across all directories...[/magenta]",
