@@ -1331,30 +1331,8 @@ def process_duplicates(args):
                 dir_task = progress.add_task(
                     "[green]Processing directories...", total=count
                 )
-                with ThreadPoolExecutor(max_workers=args.jobs) as executor:
-                    futures = []
-                    for (
-                        dir_name,
-                        file_count,
-                        total_size,
-                    ), paths in dir_duplicates.items():
-                        future = executor.submit(
-                            process_directory_group,
-                            dir_name,
-                            file_count,
-                            total_size,
-                            paths,
-                            args,
-                            progress,
-                        )
-                        futures.append(future)
-
-                    for future in as_completed(futures):
-                        try:
-                            future.result()
-                            progress.advance(dir_task)
-                        except Exception as e:
-                            console.print(f"[red]Error processing directory: {e}[/red]")
+                process_duplicate_directories(dir_duplicates, args)
+                progress.update(dir_task, completed=count)
 
     # Phase 2: File scan - Compare individual files
     console.print("\n[cyan]Phase 2: Individual File Analysis[/cyan]")
