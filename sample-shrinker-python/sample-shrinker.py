@@ -504,20 +504,7 @@ def main():
         return
 
     if action == "duplicates":
-        # Find and process duplicate directories
-        print("\nSearching for duplicate directories...")
-        duplicates = find_duplicate_directories(args.files)
-
-        if not duplicates:
-            print("No duplicate directories found.")
-            return
-
-        if args.dry_run:
-            print("\nDRY RUN - No files will be moved")
-
-        process_duplicate_directories(duplicates, args)
-        print("\nDuplicate removal complete!")
-
+        process_duplicates(args)
     else:  # Shrink samples
         # Delete all '._' files before processing anything
         for path in args.files:
