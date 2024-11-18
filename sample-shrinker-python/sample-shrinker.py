@@ -24,6 +24,9 @@ from rich.panel import Panel
 from rich.text import Text
 from rich import print as rprint
 
+# Initialize console
+console = Console()
+
 
 def usage_intro():
     return """
@@ -803,10 +806,9 @@ def get_interactive_config():
 
     if "Process files in parallel" in advanced_options:
         args.jobs = questionary.select(
-            "How many parallel jobs?", 
+            "How many parallel jobs? (higher values may improve speed but use more memory)",
             choices=["2", "4", "8", "16", "24", "32", "48", "64"], 
-            default="4",
-            description="Higher values may improve speed but use more memory"
+            default="4"
         ).ask()
         args.jobs = int(args.jobs)
 
