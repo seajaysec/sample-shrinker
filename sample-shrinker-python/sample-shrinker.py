@@ -692,8 +692,14 @@ def get_audio_fingerprint(file_path):
         samples = samples / np.max(np.abs(samples))
 
         # Get a signature using peaks in frequency domain
+        # Adjust nperseg and noverlap based on sample length
+        nperseg = min(1024, len(samples))
+        if nperseg % 2 != 0:  # Make sure nperseg is even
+            nperseg -= 1
+        noverlap = nperseg // 2  # Set noverlap to half of nperseg
+
         freqs, times, spectrogram = scipy.signal.spectrogram(
-            samples, audio.frame_rate, nperseg=1024, noverlap=512
+            samples, audio.frame_rate, nperseg=nperseg, noverlap=noverlap
         )
 
         # Get the strongest frequencies
@@ -703,7 +709,9 @@ def get_audio_fingerprint(file_path):
 
         return peaks
     except Exception as e:
-        print(f"Error generating audio fingerprint for {file_path}: {e}")
+        console.print(
+            f"[yellow]Error generating audio fingerprint for {file_path}: {e}[/yellow]"
+        )
         return None
 
 
@@ -1135,6 +1143,8 @@ def get_interactive_config():
 
 def process_duplicates(args):
     """Process both directory and file level duplicates with visual feedback."""
+    # Phase 1: Directory scan - Compare directory contents
+    console.print("\n[cyan]Phase 1: Directory Structure Analysis[/cyan]")
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -1142,8 +1152,6 @@ def process_duplicates(args):
         TaskProgressColumn(),
         console=console,
     ) as progress:
-        # Phase 1: Directory scan - Compare directory contents
-        console.print("\n[cyan]Phase 1: Directory Structure Analysis[/cyan]")
         scan_task = progress.add_task(
             "[magenta]Scanning for duplicate directory structures...[/magenta]",
             total=None,
@@ -1151,18 +1159,59 @@ def process_duplicates(args):
         dir_duplicates = find_duplicate_directories(args.files)
         progress.update(scan_task, completed=True)
 
-        if dir_duplicates:
-            count = sum(len(v) - 1 for v in dir_duplicates.values())
-            console.print(
-                Panel(
-                    f"Found [cyan]{count}[/cyan] directories with identical contents",
-                    title="Directory Structure Analysis Complete",
-                )
+    if dir_duplicates:
+        count = sum(len(v) - 1 for v in dir_duplicates.values())
+        console.print(
+            Panel(
+                f"Found [cyan]{count}[/cyan] directories with identical contents",
+                title="Directory Structure Analysis Complete",
             )
-            # ... rest of directory processing ...
+        )
+        if not args.dry_run:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+            ) as progress:
+                dir_task = progress.add_task(
+                    "[green]Processing directories...", total=len(dir_duplicates)
+                )
+                with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+                    futures = []
+                    for (
+                        dir_name,
+                        file_count,
+                        total_size,
+                    ), paths in dir_duplicates.items():
+                        future = executor.submit(
+                            process_directory_group,
+                            dir_name,
+                            file_count,
+                            total_size,
+                            paths,
+                            args,
+                            progress,
+                        )
+                        futures.append(future)
 
-        # Phase 2: File scan - Compare individual files
-        console.print("\n[cyan]Phase 2: Individual File Analysis[/cyan]")
+                    for future in as_completed(futures):
+                        try:
+                            future.result()
+                            progress.advance(dir_task)
+                        except Exception as e:
+                            console.print(f"[red]Error processing directory: {e}[/red]")
+
+    # Phase 2: File scan - Compare individual files
+    console.print("\n[cyan]Phase 2: Individual File Analysis[/cyan]")
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
         file_task = progress.add_task(
             "[magenta]Scanning for duplicate files across all directories...[/magenta]",
             total=None,
@@ -1179,7 +1228,30 @@ def process_duplicates(args):
                     title="File Analysis Complete",
                 )
             )
-            # ... rest of file processing ...
+            if not args.dry_run:
+                file_process_task = progress.add_task(
+                    "[green]Processing files...", total=len(file_duplicates)
+                )
+                with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+                    futures = []
+                    for group in file_duplicates:
+                        future = executor.submit(
+                            process_file_group,
+                            group,
+                            fuzzy_groups,
+                            args,
+                            progress,
+                        )
+                        futures.append(future)
+
+                    for future in as_completed(futures):
+                        try:
+                            future.result()
+                            progress.advance(file_process_task)
+                        except Exception as e:
+                            console.print(
+                                f"[red]Error processing file group: {e}[/red]"
+                            )
 
     console.print("[green]Duplicate analysis and removal complete![/green]")
 
