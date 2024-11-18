@@ -4,27 +4,32 @@ import filecmp
 import hashlib
 import os
 import shutil
+import subprocess
 import sys
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-import subprocess
-import json
 
 import librosa
 import matplotlib.pyplot as plt
 import numpy as np
 import questionary
-import soundfile as sf
 import scipy.signal
-from scipy.io import wavfile
+import soundfile as sf
 from pydub import AudioSegment
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
-from rich.panel import Panel
-from rich.text import Text
 from rich import print as rprint
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
+from rich.text import Text
+from scipy.io import wavfile
 
 # Initialize console
 console = Console()
@@ -137,16 +142,20 @@ def delete_resource_forks(directory):
 def reencode_audio(file_path):
     """Re-encode audio file to PCM 16-bit if it has a different encoding."""
     try:
-        output_path = str(Path(file_path).with_suffix('.reencoded.wav'))
+        output_path = str(Path(file_path).with_suffix(".reencoded.wav"))
         # Use ffmpeg directly for more reliable conversion
         cmd = [
-            'ffmpeg', '-y',
-            '-i', str(file_path),
-            '-acodec', 'pcm_s16le',
-            '-ar', '44100',
-            output_path
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(file_path),
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "44100",
+            output_path,
         ]
-        
+
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
             console.print(f"[green]Successfully re-encoded: {output_path}[/green]")
@@ -162,7 +171,7 @@ def reencode_audio(file_path):
 def check_ffmpeg():
     """Check if ffmpeg is available and properly installed."""
     try:
-        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
         return True
     except (subprocess.SubprocessError, FileNotFoundError):
         console.print("[red]Error: ffmpeg is not installed or not found in PATH[/red]")
@@ -180,7 +189,7 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
             progress.update(task_id, description=f"Processing: {Path(file_path).name}")
         else:
             console.print(f"Processing file: [cyan]{file_path}[/cyan]")
-        
+
         try:
             audio = AudioSegment.from_file(file_path)
         except (IndexError, OSError) as e:
@@ -191,11 +200,13 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
                 try:
                     audio = AudioSegment.from_file(reencoded_file)
                 except Exception as re_err:
-                    console.print(f"[red]Failed to process re-encoded file: {str(re_err)}[/red]")
+                    console.print(
+                        f"[red]Failed to process re-encoded file: {str(re_err)}[/red]"
+                    )
                     return
             else:
                 return
-            
+
         modified = False
         change_reason = []
 
@@ -252,7 +263,7 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
             status.append("[CHANGED]: ", style="yellow")
             status.append(", ".join(change_reason), style="green")
             console.print(status)
-            
+
             if not dry_run:
                 # Backup handling
                 if args.backup_dir != "-":
@@ -261,33 +272,40 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
                         file_path_obj = Path(file_path).resolve()
                         # Get the absolute path to the backup directory
                         backup_dir = Path(args.backup_dir).resolve()
-                        
+
                         # Create the relative path structure
                         rel_path = file_path_obj.relative_to(file_path_obj.parent)
                         backup_path = backup_dir / rel_path.parent.name / rel_path.name
-                        
+
                         # Ensure the backup directory exists
                         backup_path.parent.mkdir(parents=True, exist_ok=True)
-                        
+
                         # Add .old extension for the backup
-                        backup_path = backup_path.with_suffix(backup_path.suffix + '.old')
-                        
+                        backup_path = backup_path.with_suffix(
+                            backup_path.suffix + ".old"
+                        )
+
                         # Copy the original file with metadata preserved
                         console.print(f"[cyan]Backing up to: {backup_path}[/cyan]")
                         shutil.copy2(file_path, backup_path)
-                        
+
                         # Generate spectrograms if enabled
                         if not args.skip_spectrograms:
-                            generate_spectrogram(file_path, file_path, backup_path.parent)
-                            
+                            generate_spectrogram(
+                                file_path, file_path, backup_path.parent
+                            )
+
                     except Exception as e:
                         console.print(f"[red]Error creating backup: {str(e)}[/red]")
                         if args.verbose:
                             import traceback
+
                             console.print(traceback.format_exc())
                         return
                 else:
-                    console.print("[yellow]No backup created (backups disabled)[/yellow]")
+                    console.print(
+                        "[yellow]No backup created (backups disabled)[/yellow]"
+                    )
 
                 # Export the converted audio file
                 try:
@@ -298,6 +316,7 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
                     console.print(f"[red]Error saving converted file: {str(e)}[/red]")
                     if args.verbose:
                         import traceback
+
                         console.print(traceback.format_exc())
         else:
             status = Text()
@@ -310,6 +329,7 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
         if args.verbose:
             console.print(f"[yellow]Stack trace:[/yellow]")
             import traceback
+
             console.print(traceback.format_exc())
 
 
@@ -364,33 +384,37 @@ def collect_files(args):
     """Collect all wav and mp3 files from provided directories and files."""
     file_list = []
     valid_extensions = [ext.strip().lower() for ext in args.ext.split(",")]
-    
+
     console.print("[cyan]Starting file collection...[/cyan]")
-    
+
     for path in args.files:
         # Expand user and resolve path
         path = os.path.expanduser(path)
         path = os.path.expandvars(path)
         path = Path(path).resolve()
-        
+
         console.print(f"[cyan]Scanning path: {path}[/cyan]")
-        
+
         if path.is_dir():
             for root, dirs, files in os.walk(path):
                 for file in files:
                     file_lower = file.lower()
-                    if any(file_lower.endswith(f".{ext}") for ext in valid_extensions) and not file.startswith("._"):
+                    if any(
+                        file_lower.endswith(f".{ext}") for ext in valid_extensions
+                    ) and not file.startswith("._"):
                         full_path = os.path.join(root, file)
                         file_list.append(full_path)
                         if args.verbose:
                             console.print(f"[dim]Found: {full_path}[/dim]")
         elif path.is_file():
             file_lower = str(path).lower()
-            if any(file_lower.endswith(f".{ext}") for ext in valid_extensions) and not path.name.startswith("._"):
+            if any(
+                file_lower.endswith(f".{ext}") for ext in valid_extensions
+            ) and not path.name.startswith("._"):
                 file_list.append(str(path))
                 if args.verbose:
                     console.print(f"[dim]Found: {path}[/dim]")
-    
+
     console.print(f"[green]Found {len(file_list)} files to process[/green]")
     return file_list
 
@@ -400,7 +424,7 @@ def run_in_parallel(file_list, args):
     if not file_list:
         console.print("[yellow]No files to process![/yellow]")
         return
-        
+
     try:
         with Progress(
             SpinnerColumn(),
@@ -410,22 +434,21 @@ def run_in_parallel(file_list, args):
             console=console,
         ) as progress:
             total_files = len(file_list)
-            console.print(f"[cyan]Starting processing of {total_files} files with {args.jobs} parallel jobs[/cyan]")
-            
+            console.print(
+                f"[cyan]Starting processing of {total_files} files with {args.jobs} parallel jobs[/cyan]"
+            )
+
             task = progress.add_task("Processing files...", total=total_files)
-            
+
             with ThreadPoolExecutor(max_workers=args.jobs) as executor:
                 # Submit all tasks
                 futures = {
                     executor.submit(
-                        process_audio, 
-                        file, 
-                        args,
-                        task_id=task,
-                        progress=progress
-                    ): file for file in file_list
+                        process_audio, file, args, task_id=task, progress=progress
+                    ): file
+                    for file in file_list
                 }
-                
+
                 # Process completed tasks
                 for future in concurrent.futures.as_completed(futures):
                     progress.advance(task)
@@ -433,12 +456,16 @@ def run_in_parallel(file_list, args):
                         result = future.result()
                     except Exception as exc:
                         file = futures[future]
-                        console.print(f"[red]File {file} generated an exception: {exc}[/red]")
-                    
+                        console.print(
+                            f"[red]File {file} generated an exception: {exc}[/red]"
+                        )
+
             console.print("[green]Processing complete![/green]")
-                        
+
     except KeyboardInterrupt:
-        console.print("[yellow]Received KeyboardInterrupt, attempting to cancel all threads...[/yellow]")
+        console.print(
+            "[yellow]Received KeyboardInterrupt, attempting to cancel all threads...[/yellow]"
+        )
         executor.shutdown(wait=False, cancel_futures=True)
         raise
     except Exception as e:
@@ -483,26 +510,23 @@ def get_audio_fingerprint(file_path):
         # Convert to mono for comparison
         if audio.channels > 1:
             audio = audio.set_channels(1)
-        
+
         # Convert to numpy array
         samples = np.array(audio.get_array_of_samples())
-        
+
         # Normalize
         samples = samples / np.max(np.abs(samples))
-        
+
         # Get a signature using peaks in frequency domain
         freqs, times, spectrogram = scipy.signal.spectrogram(
-            samples,
-            audio.frame_rate,
-            nperseg=1024,
-            noverlap=512
+            samples, audio.frame_rate, nperseg=1024, noverlap=512
         )
-        
+
         # Get the strongest frequencies
         peaks = np.mean(spectrogram, axis=1)
         # Normalize the peaks
         peaks = peaks / np.max(peaks)
-        
+
         return peaks
     except Exception as e:
         print(f"Error generating audio fingerprint for {file_path}: {e}")
@@ -513,12 +537,12 @@ def compare_audio_similarity(file1_fingerprint, file2_fingerprint):
     """Compare two audio fingerprints and return similarity score."""
     if file1_fingerprint is None or file2_fingerprint is None:
         return 0
-    
+
     # Ensure same length for comparison
     min_len = min(len(file1_fingerprint), len(file2_fingerprint))
     f1 = file1_fingerprint[:min_len]
     f2 = file2_fingerprint[:min_len]
-    
+
     # Calculate correlation coefficient
     correlation = np.corrcoef(f1, f2)[0, 1]
     # Convert to percentage and handle NaN
@@ -530,7 +554,7 @@ def find_duplicate_files(paths, args):
     """Find duplicate files using a multi-stage approach with audio fingerprinting."""
     print("Scanning for duplicate files...")
     size_groups = defaultdict(list)
-    
+
     # First pass: group by size
     for path in paths:
         path = Path(path)
@@ -541,16 +565,16 @@ def find_duplicate_files(paths, args):
                         print(f"Scanning: {file_path}")
                     size = file_path.stat().st_size
                     size_groups[size].append(file_path)
-    
+
     hash_groups = defaultdict(list)
     similar_groups = []
-    
+
     # Second pass: check content
     for size, file_paths in size_groups.items():
         if len(file_paths) > 1:
             if args.verbose:
                 print(f"\nChecking {len(file_paths)} files of size {size} bytes...")
-            
+
             # First try exact matches
             for file_path in file_paths:
                 try:
@@ -562,12 +586,15 @@ def find_duplicate_files(paths, args):
                         hash_groups[(name_key, file_hash)].append(file_path)
                 except Exception as e:
                     print(f"Error hashing file {file_path}: {e}")
-            
+
             # Then check for similar audio content
             if args.use_fuzzy:
-                unmatched = [f for f in file_paths 
-                           if not any(f in g for g in hash_groups.values() if len(g) > 1)]
-                
+                unmatched = [
+                    f
+                    for f in file_paths
+                    if not any(f in g for g in hash_groups.values() if len(g) > 1)
+                ]
+
                 if len(unmatched) > 1:
                     # Generate fingerprints for all unmatched files
                     fingerprints = {}
@@ -575,33 +602,32 @@ def find_duplicate_files(paths, args):
                         fingerprint = get_audio_fingerprint(file_path)
                         if fingerprint is not None:
                             fingerprints[file_path] = fingerprint
-                    
+
                     # Compare fingerprints
                     processed = set()
                     for file1 in fingerprints:
                         if file1 in processed:
                             continue
-                        
+
                         similar_files = [file1]
                         for file2 in fingerprints:
                             if file2 != file1 and file2 not in processed:
                                 similarity = compare_audio_similarity(
-                                    fingerprints[file1],
-                                    fingerprints[file2]
+                                    fingerprints[file1], fingerprints[file2]
                                 )
                                 if similarity >= args.fuzzy_threshold:
                                     similar_files.append(file2)
                                     processed.add(file2)
-                        
+
                         if len(similar_files) > 1:
                             similar_groups.append(similar_files)
                             processed.add(file1)
-    
+
     # Combine results
     duplicates = [group for group in hash_groups.values() if len(group) > 1]
     if args.use_fuzzy:
         duplicates.extend(similar_groups)
-    
+
     return duplicates, similar_groups
 
 
@@ -621,7 +647,9 @@ def process_duplicate_files(duplicates, fuzzy_groups, args):
             print("Similarity scores:")
             for file in group[1:]:
                 file_fingerprint = get_audio_fingerprint(file)
-                similarity = compare_audio_similarity(base_fingerprint, file_fingerprint)
+                similarity = compare_audio_similarity(
+                    base_fingerprint, file_fingerprint
+                )
                 print(f"  {file.name}: {similarity:.1f}% similar")
 
         # Sort files by creation time
@@ -709,59 +737,9 @@ def process_duplicate_directories(duplicates, args):
                     print(f"Error moving directory {dir_path}: {e}")
 
 
-def load_saved_config():
-    """Load previously saved configuration."""
-    config_path = Path.home() / '.sample-shrinker.json'
-    if config_path.exists():
-        try:
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-                console.print("[dim]Loaded saved configuration[/dim]")
-                return config
-        except Exception as e:
-            console.print(f"[yellow]Error loading saved config: {e}[/yellow]")
-    return {}
-
-def save_config(args, action):
-    """Save current configuration."""
-    config_path = Path.home() / '.sample-shrinker.json'
-    try:
-        # Convert namespace to dict and handle Path objects
-        config = {
-            'last_action': action,
-            'files': [str(p) for p in args.files],
-            'backup_dir': args.backup_dir,
-            'bitdepth': args.bitdepth,
-            'channels': args.channels,
-            'samplerate': args.samplerate,
-            'min_samplerate': args.min_samplerate,
-            'min_bitdepth': args.min_bitdepth,
-            'auto_mono': args.auto_mono,
-            'auto_mono_threshold': args.auto_mono_threshold,
-            'skip_spectrograms': args.skip_spectrograms,
-            'pre_normalize': args.pre_normalize,
-            'jobs': args.jobs,
-            'ext': getattr(args, 'ext', "wav,mp3"),
-            'verbose': getattr(args, 'verbose', False),
-            # Duplicate removal specific settings
-            'use_fuzzy': getattr(args, 'use_fuzzy', False),
-            'ignore_names': getattr(args, 'ignore_names', False),
-            'fuzzy_threshold': getattr(args, 'fuzzy_threshold', 90),
-            'fuzzy_options': getattr(args, 'fuzzy_options', []),
-            'advanced_options': getattr(args, 'advanced_options', []),
-        }
-        
-        with open(config_path, 'w') as f:
-            json.dump(config, f, indent=2)
-            console.print("[dim]Saved configuration for next time[/dim]")
-    except Exception as e:
-        console.print(f"[yellow]Error saving config: {e}[/yellow]")
-
 def get_interactive_config():
     """Get configuration through interactive questionary prompts."""
-    # Load saved configuration
-    saved_config = load_saved_config()
-    
+
     # First, get the action type
     action = questionary.select(
         "What would you like to do?",
@@ -770,7 +748,6 @@ def get_interactive_config():
             "Remove duplicate directories",
             "Exit",
         ],
-        default=saved_config.get('last_action', "Shrink samples (convert audio files)")
     ).ask()
 
     if action == "Exit":
@@ -778,44 +755,50 @@ def get_interactive_config():
 
     # Get the directory/files to process
     paths = []
-    last_paths = saved_config.get('files', [])
-    
-    if last_paths:
-        use_last = questionary.confirm(
-            f"Use last paths?\n" + "\n".join(last_paths),
-            default=True
+    while True:
+        path = questionary.path(
+            "Select directory or file to process (press Enter with empty path when done):",
+            only_directories=False,
         ).ask()
-        if use_last:
-            paths = last_paths
 
-    # ... rest of path collection code ...
+        if not path:  # Empty input
+            if paths:  # If we have at least one path, break
+                break
+            else:  # If no paths yet, ask again
+                print("Please select at least one directory or file.")
+                continue
 
-    # Create a namespace object with ALL default values
+        paths.append(path)
+
+        if not questionary.confirm("Add another path?", default=False).ask():
+            break
+
+    if not paths:
+        return None, None
+
+    # Create a namespace object to match argparse structure
     args = argparse.Namespace()
     args.files = paths
-    args.backup_dir = saved_config.get('backup_dir', "_backup")
-    args.bitdepth = saved_config.get('bitdepth', 16)
-    args.channels = saved_config.get('channels', 2)
-    args.samplerate = saved_config.get('samplerate', 44100)
-    args.min_samplerate = saved_config.get('min_samplerate', None)
-    args.min_bitdepth = saved_config.get('min_bitdepth', None)
-    args.auto_mono = saved_config.get('auto_mono', False)
-    args.auto_mono_threshold = saved_config.get('auto_mono_threshold', -95.5)
-    args.skip_spectrograms = saved_config.get('skip_spectrograms', False)
-    args.pre_normalize = saved_config.get('pre_normalize', False)
-    args.jobs = saved_config.get('jobs', 1)
-    args.ext = saved_config.get('ext', "wav,mp3")
-    args.verbose = saved_config.get('verbose', False)
+
+    # Set ALL default values (matching parse_args defaults)
+    args.backup_dir = "_backup"
+    args.dry_run = False
+    args.verbose = False
+    args.ext = "wav,mp3"
+    args.bitdepth = 16
+    args.min_bitdepth = None
+    args.channels = 2
+    args.samplerate = 44100
+    args.min_samplerate = None
+    args.auto_mono = False
+    args.auto_mono_threshold = -95.5
+    args.skip_spectrograms = False
+    args.pre_normalize = False
     args.list = False
+    args.jobs = 1
 
     if action == "Remove duplicate directories":
-        # Use saved defaults for duplicate options
-        saved_duplicate_options = []
-        if saved_config.get('use_fuzzy', False):
-            saved_duplicate_options.append("Use fuzzy matching for similar files")
-        if saved_config.get('ignore_names', False):
-            saved_duplicate_options.append("Ignore filenames (match by content only)")
-        
+        # For duplicate removal, get configuration options
         duplicate_options = questionary.checkbox(
             "Select duplicate removal options:",
             choices=[
@@ -824,15 +807,91 @@ def get_interactive_config():
                 "Preview changes (dry run)",
                 "Show detailed progress",
             ],
-            # Only use default if we have valid saved options
-            **({"default": saved_duplicate_options} if saved_duplicate_options else {})
+            default=["Preview changes (dry run)"],
         ).ask()
 
-        # ... rest of duplicate removal configuration ...
+        args.use_fuzzy = "Use fuzzy matching for similar files" in duplicate_options
+        args.ignore_names = (
+            "Ignore filenames (match by content only)" in duplicate_options
+        )
+        args.dry_run = "Preview changes (dry run)" in duplicate_options
+        args.verbose = "Show detailed progress" in duplicate_options
 
-    else:  # Sample shrinking
-        # Define available choices first
-        available_choices = [
+        if args.use_fuzzy:
+            # Get fuzzy matching configuration
+            args.fuzzy_threshold = questionary.select(
+                "Select fuzzy matching threshold (higher = more strict):",
+                choices=[
+                    "95 - Nearly identical",
+                    "90 - Very similar",
+                    "85 - Similar",
+                    "80 - Somewhat similar",
+                ],
+                default="90 - Very similar",
+            ).ask()
+            args.fuzzy_threshold = int(args.fuzzy_threshold.split()[0])
+
+            args.fuzzy_options = questionary.checkbox(
+                "Select fuzzy matching options:",
+                choices=[
+                    "Compare file lengths",
+                    "Compare sample rates",
+                    "Compare channel counts",
+                ],
+                default=["Compare file lengths", "Compare sample rates"],
+            ).ask()
+
+        # Get backup options (moved before backup_choice)
+        backup_dir = questionary.text(
+            "Backup directory path:",
+            default="_backup",
+            description="Directory where duplicates will be moved",
+        ).ask()
+
+        if backup_dir.strip():  # If not empty
+            args.backup_dir = backup_dir.strip()
+        else:
+            args.backup_dir = "_backup"  # Fallback to default
+
+        backup_choice = questionary.select(
+            "How should duplicates be handled?",
+            choices=[
+                f"Move to {args.backup_dir} (safe)",
+                "Delete immediately (dangerous)",
+                "Preview only (no changes)",
+            ],
+            default=f"Move to {args.backup_dir} (safe)",
+        ).ask()
+
+        args.delete_duplicates = "Delete" in backup_choice
+        args.dry_run = "Preview" in backup_choice
+
+        return "duplicates", args
+
+    # For sample shrinking, get all the conversion options
+    args.bitdepth = questionary.select(
+        "Select target bit depth:", choices=["8", "16", "24"], default="16"
+    ).ask()
+    args.bitdepth = int(args.bitdepth)
+
+    args.channels = questionary.select(
+        "Select target channels:",
+        choices=["1 (mono)", "2 (stereo)"],
+        default="2 (stereo)",
+    ).ask()
+    args.channels = 1 if "1" in args.channels else 2
+
+    args.samplerate = questionary.select(
+        "Select target sample rate:",
+        choices=["22050", "44100", "48000"],
+        default="44100",
+    ).ask()
+    args.samplerate = int(args.samplerate)
+
+    # Advanced options in a checkbox group
+    advanced_options = questionary.checkbox(
+        "Select additional options:",
+        choices=[
             "Auto-convert stereo to mono when possible",
             "Pre-normalize before conversion",
             "Skip generating spectrograms",
@@ -841,117 +900,99 @@ def get_interactive_config():
             "Set minimum sample rate",
             "Set minimum bit depth",
             "Convert in place (no backups)",
-        ]
-        
-        # Get saved options and validate them
-        saved_advanced = saved_config.get('advanced_options', [])
-        # Only use saved options that exist in available choices
-        valid_saved = []
-        if saved_advanced:
-            valid_saved = [opt for opt in available_choices if opt in saved_advanced]
-        
-        # Create the checkbox without conditional default
-        advanced_options = questionary.checkbox(
-            "Select additional options:",
-            choices=available_choices,
-            default=valid_saved
+        ],
+    ).ask()
+
+    args.auto_mono = "Auto-convert stereo to mono when possible" in advanced_options
+    args.pre_normalize = "Pre-normalize before conversion" in advanced_options
+    args.skip_spectrograms = "Skip generating spectrograms" in advanced_options
+    args.dry_run = "Preview changes (dry run)" in advanced_options
+    convert_in_place = "Convert in place (no backups)" in advanced_options
+
+    # Configure backup settings if not converting in place
+    if not convert_in_place:
+        args.backup_dir = questionary.text(
+            "Backup directory path:",
+            default="_backup",
         ).ask()
-        
-        # Store selected options for next time
-        args.advanced_options = advanced_options
-
-        # Process the selections
-        args.auto_mono = "Auto-convert stereo to mono when possible" in advanced_options
-        args.pre_normalize = "Pre-normalize before conversion" in advanced_options
-        args.skip_spectrograms = "Skip generating spectrograms" in advanced_options
-        args.dry_run = "Preview changes (dry run)" in advanced_options
-        convert_in_place = "Convert in place (no backups)" in advanced_options
-
-        if "Process files in parallel" in advanced_options:
-            args.jobs = questionary.select(
-                "How many parallel jobs?",
-                choices=["2", "4", "8", "16", "24", "32", "48", "64"],
-                default=str(saved_config.get('jobs', 4))
+        if args.backup_dir.strip():  # If not empty
+            args.skip_spectrograms = questionary.confirm(
+                "Generate spectrograms for backup comparison?",
+                default=not args.skip_spectrograms,
             ).ask()
-            args.jobs = int(args.jobs)
-        else:
-            args.jobs = 1
-
-        if "Set minimum sample rate" in advanced_options:
-            args.min_samplerate = questionary.select(
-                "Select minimum sample rate:",
-                choices=["22050", "44100", "48000"],
-                default=str(saved_config.get('min_samplerate', 22050))
-            ).ask()
-            args.min_samplerate = int(args.min_samplerate)
-
-        if "Set minimum bit depth" in advanced_options:
-            args.min_bitdepth = questionary.select(
-                "Select minimum bit depth:",
-                choices=["8", "16", "24"],
-                default=str(saved_config.get('min_bitdepth', 16))
-            ).ask()
-            args.min_bitdepth = int(args.min_bitdepth)
-
-        # Configure backup settings if not converting in place
-        if not convert_in_place:
-            backup_enabled = questionary.confirm(
-                "Enable backups of original files?",
-                default=not args.backup_dir == "-"
-            ).ask()
-            
-            if backup_enabled:
-                backup_dir = questionary.text(
-                    "Backup directory path:",
-                    default=args.backup_dir if args.backup_dir != "-" else "_backup"
-                ).ask()
-                args.backup_dir = backup_dir.strip() if backup_dir.strip() else "_backup"
-                
-                if not args.skip_spectrograms:
-                    args.skip_spectrograms = not questionary.confirm(
-                        "Generate spectrograms for backup comparison?",
-                        default=True
-                    ).ask()
-            else:
-                args.backup_dir = "-"
-                args.skip_spectrograms = True
         else:
             args.backup_dir = "-"
             args.skip_spectrograms = True
 
-    # Save the final configuration
-    save_config(args, action)
+    if "Process files in parallel" in advanced_options:
+        args.jobs = questionary.select(
+            "How many parallel jobs? (higher values may improve speed but use more memory)",
+            choices=["2", "4", "8", "16", "24", "32", "48", "64"],
+            default="4",
+        ).ask()
+        args.jobs = int(args.jobs)
 
-    return "duplicates" if "Remove" in action else "shrink", args
+    if "Set minimum sample rate" in advanced_options:
+        args.min_samplerate = questionary.select(
+            "Select minimum sample rate:",
+            choices=["22050", "44100", "48000"],
+            default="22050",
+        ).ask()
+        args.min_samplerate = int(args.min_samplerate)
+
+    if "Set minimum bit depth" in advanced_options:
+        args.min_bitdepth = questionary.select(
+            "Select minimum bit depth:", choices=["8", "16", "24"], default="16"
+        ).ask()
+        args.min_bitdepth = int(args.min_bitdepth)
+
+    if args.auto_mono:
+        args.auto_mono_threshold = float(
+            questionary.text(
+                "Auto-mono threshold in dB (default: -95.5):", default="-95.5"
+            ).ask()
+        )
+
+    return "shrink", args
 
 
 def process_duplicates(args):
     """Process both directory and file level duplicates with visual feedback."""
-    with console.status("[bold green]Phase 1: Searching for duplicate directories...") as status:
+    with console.status(
+        "[bold green]Phase 1: Searching for duplicate directories..."
+    ) as status:
         dir_duplicates = find_duplicate_directories(args.files)
 
     if dir_duplicates:
         count = sum(len(v) - 1 for v in dir_duplicates.values())
-        console.print(Panel(f"Found [cyan]{count}[/cyan] duplicate directories", 
-                          title="Directory Scan Complete"))
-        
+        console.print(
+            Panel(
+                f"Found [cyan]{count}[/cyan] duplicate directories",
+                title="Directory Scan Complete",
+            )
+        )
+
         if args.dry_run:
             console.print("[yellow]DRY RUN - No directories will be moved[/yellow]")
         process_duplicate_directories(verified_duplicates, args)
     else:
         console.print("[blue]No duplicate directories found.[/blue]")
 
-    with console.status("[bold green]Phase 2: Searching for duplicate files...") as status:
+    with console.status(
+        "[bold green]Phase 2: Searching for duplicate files..."
+    ) as status:
         file_duplicates, fuzzy_groups = find_duplicate_files(args.files, args)
 
     if file_duplicates:
         total_duplicates = sum(len(group) - 1 for group in file_duplicates)
-        console.print(Panel(
-            f"Found [cyan]{total_duplicates}[/cyan] duplicate files\n"
-            f"Including [cyan]{len(fuzzy_groups)}[/cyan] groups of similar files",
-            title="File Scan Complete"
-        ))
-        
+        console.print(
+            Panel(
+                f"Found [cyan]{total_duplicates}[/cyan] duplicate files\n"
+                f"Including [cyan]{len(fuzzy_groups)}[/cyan] groups of similar files",
+                title="File Scan Complete",
+            )
+        )
+
         # Additional safety checks for file processing
         safe_duplicates = []
         for group in file_duplicates:
