@@ -2,11 +2,15 @@ import argparse
 import concurrent.futures
 import os
 import shutil
+import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 import librosa
 import matplotlib.pyplot as plt
 import numpy as np
+import questionary
 import soundfile as sf
 from pydub import AudioSegment
 
@@ -324,6 +328,61 @@ def run_in_parallel(file_list, args):
         raise
 
 
+def find_duplicate_directories(paths):
+    """Find directories with matching names and file counts."""
+    dir_map = defaultdict(list)
+
+    for path in paths:
+        path = Path(path)
+        if path.is_dir():
+            for dir_path in path.rglob("*"):
+                if dir_path.is_dir():
+                    # Get directory name, file count, and total size
+                    dir_name = dir_path.name.lower()  # Case-insensitive comparison
+                    files = list(dir_path.glob("*"))
+                    file_count = len([f for f in files if f.is_file()])
+                    total_size = sum(f.stat().st_size for f in files if f.is_file())
+
+                    dir_map[(dir_name, file_count, total_size)].append(dir_path)
+
+    # Return only directories that have duplicates
+    return {k: v for k, v in dir_map.items() if len(v) > 1}
+
+
+def process_duplicate_directories(duplicates, args):
+    """Process duplicate directories, keeping the oldest copy."""
+    for (dir_name, file_count, total_size), paths in duplicates.items():
+        print(
+            f"\nFound duplicate directories named '{dir_name}' with {file_count} files ({total_size} bytes):"
+        )
+
+        # Sort paths by creation time
+        paths_with_time = [(p, p.stat().st_ctime) for p in paths]
+        paths_with_time.sort(key=lambda x: x[1])
+
+        # Keep the oldest directory
+        original_dir = paths_with_time[0][0]
+        print(
+            f"Keeping oldest copy: {original_dir} (created: {time.ctime(paths_with_time[0][1])})"
+        )
+
+        # Process newer copies
+        for dir_path, ctime in paths_with_time[1:]:
+            print(f"Moving duplicate: {dir_path} (created: {time.ctime(ctime)})")
+            if not args.dry_run:
+                # Create backup path
+                rel_path = dir_path.relative_to(dir_path.parent.parent)
+                backup_path = Path(args.backup_dir) / rel_path
+
+                # Ensure backup directory exists
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
+
+                try:
+                    shutil.move(str(dir_path), str(backup_path))
+                except Exception as e:
+                    print(f"Error moving directory {dir_path}: {e}")
+
+
 def main():
     args = parse_args()
 
@@ -332,20 +391,48 @@ def main():
         print(usage_intro())
         return
 
-    # Delete all '._' files before processing anything
-    for path in args.files:
-        if os.path.isdir(path):
-            delete_resource_forks(path)
+    # Ask user what they want to do
+    action = questionary.select(
+        "What would you like to do?",
+        choices=[
+            "Shrink samples (convert audio files)",
+            "Remove duplicate directories",
+            "Exit",
+        ],
+    ).ask()
 
-    # Collect the files to process
-    file_list = collect_files(args)
+    if action == "Exit":
+        return
+    elif action == "Remove duplicate directories":
+        # Find and process duplicate directories
+        print("\nSearching for duplicate directories...")
+        duplicates = find_duplicate_directories(args.files)
 
-    if args.dry_run or args.list:
-        list_files(args, file_list)
-        for file in file_list:
-            process_audio(file, args, dry_run=True)
-    else:
-        run_in_parallel(file_list, args)
+        if not duplicates:
+            print("No duplicate directories found.")
+            return
+
+        if args.dry_run:
+            print("\nDRY RUN - No files will be moved")
+
+        process_duplicate_directories(duplicates, args)
+        print("\nDuplicate removal complete!")
+
+    else:  # Shrink samples
+        # Delete all '._' files before processing anything
+        for path in args.files:
+            if os.path.isdir(path):
+                delete_resource_forks(path)
+
+        # Collect the files to process
+        file_list = collect_files(args)
+
+        if args.dry_run or args.list:
+            list_files(args, file_list)
+            for file in file_list:
+                process_audio(file, args, dry_run=True)
+        else:
+            run_in_parallel(file_list, args)
 
 
 if __name__ == "__main__":
