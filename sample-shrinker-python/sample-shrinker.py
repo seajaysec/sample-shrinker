@@ -255,23 +255,47 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
             if not dry_run:
                 # Backup the original file if required
                 if args.backup_dir != "-":
-                    # Get the relative path from the current working directory
-                    rel_path = os.path.relpath(file_path)
-                    # Create the backup path maintaining the directory structure
-                    backup_path = os.path.join(args.backup_dir, rel_path)
-                    # Ensure the directory structure exists
-                    os.makedirs(os.path.dirname(backup_path), exist_ok=True)
-                    shutil.copy2(file_path, backup_path)  # copy2 preserves metadata
+                    try:
+                        # Convert the file path to a Path object
+                        file_path_obj = Path(file_path).resolve()
+                        # Get the absolute path to the backup directory
+                        backup_dir = Path(args.backup_dir).resolve()
+                        
+                        # Create the relative path structure
+                        rel_path = file_path_obj.relative_to(file_path_obj.parent)
+                        backup_path = backup_dir / rel_path.parent.name / rel_path.name
+                        
+                        # Ensure the backup directory exists
+                        backup_path.parent.mkdir(parents=True, exist_ok=True)
+                        
+                        # Add .old extension for the backup
+                        backup_path = backup_path.with_suffix(backup_path.suffix + '.old')
+                        
+                        # Copy the original file with metadata preserved
+                        console.print(f"[cyan]Backing up to: {backup_path}[/cyan]")
+                        shutil.copy2(file_path, backup_path)
+                        
+                        # Generate spectrograms if enabled
+                        if not args.skip_spectrograms:
+                            generate_spectrogram(file_path, file_path, backup_path.parent)
+                            
+                    except Exception as e:
+                        console.print(f"[red]Error creating backup: {str(e)}[/red]")
+                        if args.verbose:
+                            import traceback
+                            console.print(traceback.format_exc())
+                        return
 
                 # Export the converted audio file
-                output_file = file_path.replace(os.path.splitext(file_path)[1], ".wav")
-                audio.export(output_file, format="wav")
-
-                # Generate spectrogram if enabled
-                if not args.skip_spectrograms:
-                    generate_spectrogram(
-                        file_path, output_file, os.path.dirname(backup_path)
-                    )
+                try:
+                    output_file = file_path
+                    audio.export(output_file, format="wav")
+                    console.print(f"[green]Converted file saved: {output_file}[/green]")
+                except Exception as e:
+                    console.print(f"[red]Error saving converted file: {str(e)}[/red]")
+                    if args.verbose:
+                        import traceback
+                        console.print(traceback.format_exc())
         else:
             status = Text()
             status.append(f"{file_path} ", style="cyan")
@@ -280,9 +304,10 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
 
     except Exception as e:
         console.print(f"[red]Error processing {file_path}: {str(e)}[/red]")
-        console.print(f"[yellow]Stack trace:[/yellow]")
-        import traceback
-        console.print(traceback.format_exc())
+        if args.verbose:
+            console.print(f"[yellow]Stack trace:[/yellow]")
+            import traceback
+            console.print(traceback.format_exc())
 
 
 def check_effectively_mono(audio, threshold_dB):
