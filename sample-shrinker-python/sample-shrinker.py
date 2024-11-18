@@ -253,7 +253,7 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
             console.print(status)
             
             if not dry_run:
-                # Backup the original file if required
+                # Backup handling
                 if args.backup_dir != "-":
                     try:
                         # Convert the file path to a Path object
@@ -285,6 +285,8 @@ def process_audio(file_path, args, dry_run=False, task_id=None, progress=None):
                             import traceback
                             console.print(traceback.format_exc())
                         return
+                else:
+                    console.print("[yellow]No backup created (backups disabled)[/yellow]")
 
                 # Export the converted audio file
                 try:
@@ -869,7 +871,8 @@ def get_interactive_config():
             "Preview changes (dry run)",
             "Process files in parallel",
             "Set minimum sample rate",
-            "Set minimum bit depth"
+            "Set minimum bit depth",
+            "Convert in place (no backups)",
         ],
     ).ask()
 
@@ -877,6 +880,22 @@ def get_interactive_config():
     args.pre_normalize = "Pre-normalize before conversion" in advanced_options
     args.skip_spectrograms = "Skip generating spectrograms" in advanced_options
     args.dry_run = "Preview changes (dry run)" in advanced_options
+    convert_in_place = "Convert in place (no backups)" in advanced_options
+
+    # Configure backup settings if not converting in place
+    if not convert_in_place:
+        args.backup_dir = questionary.text(
+            "Backup directory path:",
+            default="_backup",
+        ).ask()
+        if args.backup_dir.strip():  # If not empty
+            args.skip_spectrograms = questionary.confirm(
+                "Generate spectrograms for backup comparison?",
+                default=not args.skip_spectrograms
+            ).ask()
+        else:
+            args.backup_dir = "-"
+            args.skip_spectrograms = True
 
     if "Process files in parallel" in advanced_options:
         args.jobs = questionary.select(
